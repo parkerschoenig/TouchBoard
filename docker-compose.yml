@@ -1,0 +1,17 @@
+services:
+  touchboard:
+    build: .
+    container_name: touchboard
+    ports:
+      - "8011:8011"
+    volumes:
+      - touchboard-data:/data
+    environment:
+      # Set a stable key so credentials survive recreation. Generate with:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      # TOUCHBOARD_SECRET_KEY: "paste-a-fernet-key-here"
+      TOUCHBOARD_DB: /data/touchboard.db
+    restart: unless-stopped
+
+volumes:
+  touchboard-data:

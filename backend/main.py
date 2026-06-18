@@ -1,0 +1,54 @@
+"""TouchBoard server: serves the static frontend and the REST + SSE API."""
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from . import db
+from .api.routes import router as api_router
+from .poller import poller
+
+FRONTEND = Path(__file__).parent.parent / "frontend"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    poller.start()
+    yield
+    await poller.stop()
+
+
+app = FastAPI(title="TouchBoard", lifespan=lifespan)
+app.include_router(api_router)
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(FRONTEND / "login.html")
+
+
+@app.get("/")
+def home():
+    return FileResponse(FRONTEND / "layout-editor.html")
+
+
+@app.get("/configure")
+def configure():
+    return FileResponse(FRONTEND / "index.html")
+
+
+@app.get("/display")
+def display():
+    return FileResponse(FRONTEND / "display.html")
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+# static assets (css/js/vendor) under /static
+app.mount("/static", StaticFiles(directory=FRONTEND / "static"), name="static")

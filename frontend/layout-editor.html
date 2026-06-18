@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TouchBoard — Layout Editor</title>
+  <link rel="stylesheet" href="/static/vendor/gridstack.min.css" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="layout-editor-page">
+  <div class="topbar">
+    <h1 class="topbar-brand"><img src="/static/img/logo.png?v=3" alt="" class="topbar-logo-img" /><span>TouchBoard</span></h1>
+    <label>Display
+      <input type="number" id="res-w" min="320" max="7680" value="1920" />
+      ×
+      <input type="number" id="res-h" min="240" max="4320" value="720" />
+    </label>
+    <span class="spacer"></span>
+    <nav class="topbar-settings-nav">
+      <button class="topbar-settings-btn" data-section="Ping Targets" data-tip="Monitor hosts, services and URLs">Ping Targets</button>
+      <button class="topbar-settings-btn" data-section="Integrations" data-tip="Connect Proxmox, TrueNAS and NetBox">Integrations</button>
+      <button class="topbar-settings-btn" data-section="Designer" data-tip="Customize card styles and board appearance">Designer</button>
+      <button class="topbar-settings-btn" data-section="Users" data-tip="Manage user accounts and access">Users</button>
+    </nav>
+    <button id="tips-toggle-btn" class="topbar-icon-btn" title="Toggle contextual tips" data-tip="Contextual tips on/off">💡</button>
+    <span class="topbar-user" id="topbar-user"></span>
+    <button id="logout-btn" class="topbar-icon-btn topbar-signout-btn" title="Sign out">Sign out</button>
+  </div>
+
+  <div class="layout-editor-container">
+    <!-- Left sidebar -->
+    <aside class="stack-palette">
+      <!-- Shown only while dragging a placed card back to remove it -->
+      <div class="palette-drop-zone" id="palette-drop-zone">← drop here to remove</div>
+
+      <div class="palette-scroll">
+
+        <!-- ── Widgets ─────────────────────────────────────────── -->
+        <div class="sb-section" id="sb-widgets">
+          <div class="sb-section-head">
+            <button class="sb-toggle">
+              <span class="sb-arrow">▾</span> Widgets
+              <span class="sb-count" id="widget-count">0</span>
+            </button>
+            <button class="sb-add" id="new-widget-btn" title="New widget" data-tip="Create a new widget">＋</button>
+          </div>
+          <div class="sb-body" id="widget-list"></div>
+        </div>
+
+        <div class="palette-tips">
+          <div class="tips-title">How to use</div>
+          <ul class="tips-list">
+            <li>Click <strong>＋</strong> to create a widget</li>
+            <li>Drag a widget into the preview to place it</li>
+            <li>Drag a second widget <em>onto</em> a placed card to stack them</li>
+            <li>Click <strong>✎</strong> on a card to reorder or remove widgets</li>
+            <li>Drag a placed card back here to remove it</li>
+            <li>Scroll over a card to flip between widgets</li>
+            <li>Changes save automatically</li>
+          </ul>
+        </div>
+
+      </div><!-- /.palette-scroll -->
+    </aside>
+
+    <!-- Right: page tabs + preview viewport -->
+    <div class="layout-editor-body">
+      <div class="preview-area">
+        <div class="page-tabs-bar" id="page-tabs-bar">
+          <button class="page-tab-add" id="page-tab-add" title="Add page">＋ Page</button>
+          <a href="/display" target="_blank" rel="noopener" class="open-display-btn" data-tip="Open display in new tab">Open Display ↗</a>
+        </div>
+        <div class="preview-viewport" id="preview-viewport">
+          <div class="grid-empty-hint" id="grid-empty-hint">
+            <div class="hint-arrow">←</div>
+            <div class="hint-text">Drag a widget on here to get started</div>
+          </div>
+          <div class="grid-stack" id="gs-grid"></div>
+        </div>
+        <div class="editor-controls-ref">
+          <span class="ecr-title">Controls</span>
+          <div class="ecr-items">
+            <div class="ecr-item"><span class="ecr-key">⠿ drag</span><span class="ecr-desc">move card</span></div>
+            <div class="ecr-item"><span class="ecr-key">⤡ drag edge</span><span class="ecr-desc">resize</span></div>
+            <div class="ecr-item"><span class="ecr-key">scroll ●●</span><span class="ecr-desc">cycle stack</span></div>
+            <div class="ecr-item"><span class="ecr-key">✎</span><span class="ecr-desc">edit widget/stack</span></div>
+            <div class="ecr-item"><span class="ecr-key">↙</span><span class="ecr-desc">remove from board</span></div>
+            <div class="ecr-item"><span class="ecr-key">🖌</span><span class="ecr-desc">edit colors</span></div>
+            <div class="ecr-item"><span class="ecr-key">☀/☾</span><span class="ecr-desc">light/dark text</span></div>
+            <div class="ecr-item"><span class="ecr-key">drop onto card</span><span class="ecr-desc">stack widgets</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Widget create / edit modal -->
+  <dialog id="widget-modal"></dialog>
+
+  <!-- Stack create / edit modal -->
+  <dialog id="stack-modal"></dialog>
+
+  <!-- Settings modal -->
+  <dialog id="settings-modal"></dialog>
+
+  <script src="/static/vendor/gridstack-all.js"></script>
+  <script type="module" src="/static/js/layout-editor.js"></script>
+</body>
+</html>
