@@ -2,7 +2,7 @@
 
 A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastructure. Design a multi-page layout of widgets, integrations, and stacks in any browser — then point any display at the server URL.
 
-![demo](https://img.shields.io/badge/live_demo-touchboard--demo.onrender.com-3b82f6?style=flat-square)
+![demo](https://img.shields.io/badge/live_demo-touchboard.onrender.com-3b82f6?style=flat-square)
 
 ## Features
 
