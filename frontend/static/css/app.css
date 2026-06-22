@@ -1493,6 +1493,15 @@ body.display { overflow: hidden; }
 
 /* ── Ping target library picker ─────────────────────────────────────────── */
 .wm-ping-library { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.ping-picker { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; margin-top: 4px; }
+.ping-picker-group { display: flex; align-items: center; gap: 8px; padding: 6px 0 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; border-top: 1px solid var(--border); margin-top: 4px; }
+.ping-picker-group:first-child { border-top: none; margin-top: 0; }
+.ping-picker-group-name { flex: 1; }
+.ping-picker-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 5px; cursor: pointer; font-size: 13px; color: var(--text); }
+.ping-picker-row:hover { background: rgba(59,130,246,.08); }
+.ping-picker-cb { accent-color: #3b82f6; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+.ping-picker-label { flex: 1; }
+
 .wm-ping-filter  { display: flex; flex-direction: column; gap: 4px; }
 .wm-ping-search  { width: 100%; }
 .wm-ping-groups  { display: flex; flex-wrap: wrap; gap: 4px; }

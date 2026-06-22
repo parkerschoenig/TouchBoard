@@ -351,6 +351,73 @@ function buildViewOrderUI(viewDefs, savedViews) {
 
 // ── widget modal ──────────────────────────────────────────────────────────────
 
+function buildPingLibraryPicker(w) {
+  const selectedIds = new Set(w?.config?.target_ids || []);
+
+  const wrap = document.createElement("div");
+  wrap.className = "ping-picker";
+
+  if (!pingTargets.length) {
+    wrap.appendChild(Object.assign(document.createElement("div"), {
+      className: "w-empty",
+      textContent: "No ping targets defined. Add targets in Settings → Ping Targets.",
+    }));
+    wrap.getSelectedIds = () => [];
+    return wrap;
+  }
+
+  const groups = {};
+  const ungrouped = [];
+  for (const t of pingTargets) {
+    if (t.group) { (groups[t.group] = groups[t.group] || []).push(t); }
+    else { ungrouped.push(t); }
+  }
+
+  const checkboxes = new Map();
+
+  function addRow(t) {
+    const lbl = document.createElement("label");
+    lbl.className = "ping-picker-row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "ping-picker-cb"; cb.checked = selectedIds.has(t.id);
+    cb.addEventListener("change", () => { if (cb.checked) selectedIds.add(t.id); else selectedIds.delete(t.id); });
+    checkboxes.set(t.id, cb);
+    lbl.append(cb, Object.assign(document.createElement("span"), { className: "ping-picker-label", textContent: t.label || t.address }));
+    wrap.appendChild(lbl);
+  }
+
+  for (const [grp, targets] of Object.entries(groups)) {
+    const grpHead = document.createElement("div");
+    grpHead.className = "ping-picker-group";
+    const grpCb = document.createElement("input");
+    grpCb.type = "checkbox"; grpCb.className = "ping-picker-cb";
+    grpCb.checked = targets.every(t => selectedIds.has(t.id));
+    grpCb.addEventListener("change", () => {
+      for (const t of targets) {
+        if (grpCb.checked) selectedIds.add(t.id); else selectedIds.delete(t.id);
+        const cb = checkboxes.get(t.id);
+        if (cb) cb.checked = grpCb.checked;
+      }
+    });
+    grpHead.append(grpCb, Object.assign(document.createElement("span"), { className: "ping-picker-group-name", textContent: grp }));
+    wrap.appendChild(grpHead);
+    for (const t of targets) addRow(t);
+  }
+
+  if (ungrouped.length) {
+    if (Object.keys(groups).length) {
+      const uHead = document.createElement("div");
+      uHead.className = "ping-picker-group";
+      uHead.appendChild(Object.assign(document.createElement("span"), { className: "ping-picker-group-name", textContent: "Ungrouped" }));
+      wrap.appendChild(uHead);
+    }
+    for (const t of ungrouped) addRow(t);
+  }
+
+  wrap.getSelectedIds = () => [...selectedIds];
+  return wrap;
+}
+
 async function openWidgetModal(w = null) {
   const dlg = byId("widget-modal");
   dlg.innerHTML = "";
