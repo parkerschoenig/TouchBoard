@@ -34,6 +34,7 @@ const MIN_W   = 2;   // minimum card width in grid units
 const MIN_H   = 2;   // minimum card height in grid units
 const DEF_W   = 6;   // default drop width
 const DEF_H   = 4;   // default drop height
+const INTEGRATION_TYPES = new Set(["proxmox", "truenas", "netbox"]);
 
 let board          = { columns: COLS, pages: [{ id: 1, name: "Page 1", layout: [] }] };
 let currentPageIdx = 0;
@@ -221,6 +222,9 @@ function buildWidgetItem(w) {
   item.addEventListener("dragstart", (e) => {
     if (e.target.closest("button")) { e.preventDefault(); return; }
     e.dataTransfer.setData("text/plain", `widget:${w.id}`);
+    if (INTEGRATION_TYPES.has(w.type)) {
+      e.dataTransfer.setData("application/x-tb-integration", "1");
+    }
     e.dataTransfer.effectAllowed = "copy";
     item.classList.add("dragging");
   });
@@ -827,6 +831,9 @@ function buildPlacedContent(stack, initialPage = 0) {
 
   const card = document.createElement("div");
   card.className = "layout-stack-card";
+  if (stack.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type))) {
+    card.dataset.integration = "1";
+  }
 
   const dragHandle = document.createElement("div");
   dragHandle.className = "layout-drag-handle";
@@ -885,6 +892,8 @@ function buildPlacedContent(stack, initialPage = 0) {
   const vp = byId("preview-viewport");
   card.addEventListener("dragover", (e) => {
     if (!e.dataTransfer.types.includes("text/plain")) return;
+    const isIntegrationDrag = e.dataTransfer.types.includes("application/x-tb-integration");
+    if (card.dataset.integration || isIntegrationDrag) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "copy";
@@ -954,6 +963,8 @@ function buildPlacedContent(stack, initialPage = 0) {
 async function mergeWidgetIntoStack(stack, widgetId) {
   const widget = widgetsById[widgetId];
   if (!widget || stack.widget_ids.includes(widgetId)) return;
+  if (INTEGRATION_TYPES.has(widget.type)) return;
+  if (stack.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type))) return;
 
   const newIds = [...stack.widget_ids, widgetId];
   const updated = await api.updateStack(stack.id, { widget_ids: newIds });
@@ -2745,7 +2756,7 @@ function showOnboarding(settings) {
       slideEl.appendChild(Object.assign(document.createElement("h2"), { className: "ob-title", textContent: "You're All Set!" }));
       slideEl.appendChild(Object.assign(document.createElement("p"), { className: "ob-body", textContent: "Thanks for trying TouchBoard. This project is in beta - you may encounter bugs. If you find any, please report them on GitHub." }));
       const donate = Object.assign(document.createElement("a"), {
-        href: "#",
+        href: "https://ko-fi.com/parkertouchboard",
         className: "ob-donate-btn",
         innerHTML: "☕ &nbsp;Support Development",
         target: "_blank",

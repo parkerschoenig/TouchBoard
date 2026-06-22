@@ -2084,6 +2084,12 @@ body.login-page {
   margin-top: 20px; transition: all .15s;
 }
 .ob-donate-btn:hover { background: rgba(245,158,11,0.18); }
+.sidebar-footer {
+  flex-shrink: 0; padding: 12px 16px 20px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  display: flex; justify-content: center;
+}
+.sidebar-donate-btn { margin-top: 0; }
 .ob-beta-note {
   font-size: 11px; color: rgba(255,255,255,0.22); margin-top: 14px;
 }
