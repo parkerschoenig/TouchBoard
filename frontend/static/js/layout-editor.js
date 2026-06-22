@@ -2913,10 +2913,6 @@ async function init() {
     window.location.href = "/login";
   });
 
-  if (currentUser.is_default_password) {
-    await showChangePasswordModal();
-  }
-
   const full = await api.boardFull();
   board   = full.board;
   // Normalize: backend always returns pages now, but guard for safety
@@ -2948,13 +2944,8 @@ async function init() {
     });
   }
 
-  if (settings.onboarding_done !== "true") {
-    // Also fetch auth/me to check if password is still default
-    api.me().then(me => {
-      showOnboarding({ ...settings, is_default_password: me.is_default_password });
-    }).catch(() => {
-      showOnboarding(settings);
-    });
+  if (settings.onboarding_done !== "true" || currentUser.is_default_password) {
+    showOnboarding({ ...settings, is_default_password: currentUser.is_default_password });
   }
 
   currentTheme.style = settings.theme_style || "classic";
