@@ -1134,6 +1134,16 @@ select.sb-form-input { padding: 5px 10px; }
 }
 
 
+/* VM list slide */
+.nb-vm-row {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 4px 0; border-bottom: 1px solid var(--border);
+  font-size: clamp(11px, 4cqw, 16px);
+}
+.nb-vm-row:last-child { border-bottom: none; }
+.nb-vm-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nb-vm-specs { font-size: .85em; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+
 /* ── TrueNAS widget ─────────────────────────────────────────────────────────── */
 .w-truenas {
   display: flex; flex-direction: column; height: 100%;

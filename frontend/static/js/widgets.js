@@ -454,12 +454,16 @@ function _buildRack(rack, widgetConfig = {}) {
   return wrap;
 }
 
-const _NB_ALL_VIEWS = ["rack", "devices", "ips"];
+const _NB_ALL_VIEWS = ["rack", "devices", "ips", "vms"];
 
 function _nbPages(widget) {
   const cv = widget.config?.views;
   if (!cv?.length) return [..._NB_ALL_VIEWS];
   const pages = cv.filter(v => v.enabled !== false).map(v => v.key).filter(k => _NB_ALL_VIEWS.includes(k));
+  // Append any newly added views not yet present in the saved config
+  for (const k of _NB_ALL_VIEWS) {
+    if (!cv.some(v => v.key === k)) pages.push(k);
+  }
   return pages.length ? pages : [..._NB_ALL_VIEWS];
 }
 
@@ -498,6 +502,16 @@ function renderNetBox(widget, data) {
       body.appendChild(row);
     }
     if (!data.ips?.length) body.appendChild(el("div", "w-empty", "No IPs returned"));
+
+  } else if (view === "vms") {
+    body.appendChild(el("div", "nb-view-title",
+      `Virtual Machines${data.total_vms != null ? " · " + data.total_vms + " total" : ""}`));
+    for (const vm of data.vms || []) {
+      const row = el("div", "nb-vm-row");
+      row.appendChild(el("span", "nb-vm-name", vm.name));
+      body.appendChild(row);
+    }
+    if (!data.vms?.length) body.appendChild(el("div", "w-empty", "No VMs returned"));
   }
 
   if (pages.length > 1) {

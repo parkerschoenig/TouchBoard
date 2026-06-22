@@ -470,6 +470,7 @@ async function openWidgetModal(w = null) {
         { key: "rack",    label: "Elevation" },
         { key: "devices", label: "Device Count" },
         { key: "ips",     label: "IP Addresses" },
+        { key: "vms",     label: "Virtual Machines" },
       ];
       const nbViewUI = buildViewOrderUI(nbViewDefs, cfg.views || null);
       const nbViewLbl = Object.assign(document.createElement("div"), { className: "sb-form-label", textContent: "Display sections" });

@@ -1,4 +1,4 @@
-"""NetBox integration: rack elevation, device count, IP addresses."""
+"""NetBox integration: rack elevation, device count, IP addresses, virtual machines."""
 import httpx
 
 _TIMEOUT = 12.0
@@ -61,6 +61,30 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
             result["total_ips"] = None
             result["ips"] = []
             result["ips_error"] = str(exc)
+
+        # ── Virtual machines ──────────────────────────────────────────────
+        try:
+            r = await client.get(
+                f"{base_url}/api/virtualization/virtual-machines/?limit=50&ordering=name",
+                headers=headers,
+            )
+            r.raise_for_status()
+            data = r.json()
+            result["total_vms"] = data.get("count", 0)
+            result["vms"] = [
+                {
+                    "name":    vm.get("name", ""),
+                    "status":  (vm.get("status") or {}).get("value", ""),
+                    "cluster": (vm.get("cluster") or {}).get("name", ""),
+                    "vcpus":   vm.get("vcpus"),
+                    "memory":  vm.get("memory"),
+                }
+                for vm in data.get("results", [])
+            ]
+        except Exception as exc:
+            result["total_vms"] = None
+            result["vms"] = []
+            result["vms_error"] = str(exc)
 
         # ── Rack elevation ────────────────────────────────────────────────────
         if not rack_name:
