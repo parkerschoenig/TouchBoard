@@ -8,10 +8,15 @@ Widget config:
     "units": "fahrenheit"   # or "celsius"
   }
 """
+import time
 import httpx
 
 _BASE = "https://api.open-meteo.com/v1/forecast"
 _TIMEOUT = 10.0
+_CACHE_TTL = 600  # 10 minutes
+
+# {"{lat}_{lon}": (monotonic_ts, result)}
+_cache: dict[str, tuple[float, dict]] = {}
 
 # WMO weather code → human label
 _WMO_LABEL = {
@@ -37,6 +42,13 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     if lat is None or lon is None:
         return {"error": "latitude and longitude are required"}
 
+    cache_key = f"{lat}_{lon}"
+    now = time.monotonic()
+    if cache_key in _cache:
+        ts, cached = _cache[cache_key]
+        if now - ts < _CACHE_TTL:
+            return cached
+
     units = cfg.get("units", "fahrenheit")
     wind_unit = "mph" if units == "fahrenheit" else "kmh"
 
@@ -56,10 +68,15 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
         "timezone": "auto",
     }
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.get(_BASE, params=params)
-        resp.raise_for_status()
-        raw = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(_BASE, params=params)
+            resp.raise_for_status()
+            raw = resp.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429 and cache_key in _cache:
+            return _cache[cache_key][1]
+        raise
 
     cur    = raw.get("current", {})
     daily  = raw.get("daily", {})
@@ -92,7 +109,7 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
         except (ValueError, IndexError):
             pass
 
-    return {
+    result = {
         "location": cfg.get("location_name", f"{lat}, {lon}"),
         "unit": units,
         "wind_unit": wind_unit,
@@ -117,3 +134,5 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
             for i in range(min(forecast_days, len(daily.get("time", []))))
         ],
     }
+    _cache[cache_key] = (time.monotonic(), result)
+    return result
