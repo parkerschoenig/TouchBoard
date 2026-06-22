@@ -725,6 +725,10 @@ select.sb-form-input { padding: 5px 10px; }
 .palette-edit-panel select { user-select: text; }
 
 /* Live widget renders inside placed grid cards */
+.layout-widget-area,
+.display-widget-body {
+  zoom: var(--widget-font-scale, 1);
+}
 .layout-widget-area {
   flex: 1; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column;
@@ -1862,6 +1866,9 @@ body.login-page {
   border-radius: 6px; padding: 7px 10px; color: #e2e8f0; font: inherit; width: 100%;
 }
 .ds-font-select option { background: #1a2234; color: #e2e8f0; }
+.ds-scale-row { display: flex; align-items: center; gap: 10px; }
+.ds-scale-slider { flex: 1; accent-color: var(--accent, #3b82f6); cursor: pointer; }
+.ds-scale-label { font-size: 12px; color: #e2e8f0; min-width: 36px; text-align: right; }
 
 /* Control sections */
 .ds-section { display: flex; flex-direction: column; gap: 10px; }

@@ -6,6 +6,7 @@ fetch("/api/settings").then(r => r.json()).then(s => {
   applyTheme({ style: s.theme_style, font: s.theme_font });
   applyCardStyle(s);
   if (s.board_bg_color) boardEl.style.backgroundColor = s.board_bg_color;
+  document.documentElement.style.setProperty("--widget-font-scale", s.widget_font_scale || "1");
 }).catch(() => {});
 
 const boardEl     = document.getElementById("board");
@@ -100,6 +101,7 @@ function buildPagePanel(pageLayout, stackById) {
     cell.style.gridRow    = `${node.y + 1} / span ${node.h}`;
 
     const bodyEl = document.createElement("div");
+    bodyEl.className = "display-widget-body";
     bodyEl.style.flex = "1"; bodyEl.style.minHeight = "0"; bodyEl.style.overflow = "hidden";
     const dotsEl = document.createElement("div");
     dotsEl.className = "stack-dots";
@@ -231,7 +233,16 @@ function onEnvelope(env) {
 
 function connectSSE() {
   const es = new EventSource("/api/stream");
-  es.onmessage = (e) => { try { onEnvelope(JSON.parse(e.data)); } catch (_) {} };
+  es.onmessage = (e) => {
+    try {
+      const env = JSON.parse(e.data);
+      if (env.type === "settings_update") {
+        document.documentElement.style.setProperty("--widget-font-scale", env.data.widget_font_scale || "1");
+      } else {
+        onEnvelope(env);
+      }
+    } catch (_) {}
+  };
 }
 
 // ── navigation ───────────────────────────────────────────────────────────────

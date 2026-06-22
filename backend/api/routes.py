@@ -71,7 +71,9 @@ def get_settings():
 @router.patch("/settings")
 def patch_settings(body: SettingsPatch, user: dict = Depends(current_user)):
     db.set_settings({k: str(v) for k, v in body.model_dump(exclude_none=True).items()})
-    return db.get_all_settings()
+    settings = db.get_all_settings()
+    poller._publish({"type": "settings_update", "data": settings})
+    return settings
 
 
 @router.get("/auth/me")

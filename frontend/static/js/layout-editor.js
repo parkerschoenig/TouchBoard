@@ -825,6 +825,20 @@ function showIntegrationToast() {
   toast._t = setTimeout(() => toast.classList.remove("visible"), 2800);
 }
 
+function showPageFullToast() {
+  let toast = document.getElementById("page-full-toast");
+  if (!toast) {
+    toast = Object.assign(document.createElement("div"), {
+      id: "page-full-toast", className: "integration-toast",
+      textContent: "No room on this page",
+    });
+    document.body.appendChild(toast);
+  }
+  toast.classList.add("visible");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toast.classList.remove("visible"), 2800);
+}
+
 function buildPlacedContent(stack, initialPage = 0) {
   const content = document.createElement("div");
   content.className = "grid-stack-item-content";
@@ -1054,7 +1068,7 @@ function findFreeCellAndSize(preferX, preferY, preferW, preferH) {
       }
     }
   }
-  return { x: 0, y: 0, w: preferW, h: preferH }; // fallback
+  return null; // page is full
 }
 
 function buildGridItem(stack, node, type = "stack") {
@@ -1113,12 +1127,15 @@ function setupDropZone() {
     const rawX = Math.max(0, Math.min(COLS - DEF_W, Math.floor((e.clientX - rect.left) / cellW)));
     const rawY = Math.max(0, Math.min(ROWS - DEF_H, Math.floor((e.clientY - rect.top)  / cellH)));
 
+    const placement = findFreeCellAndSize(rawX, rawY, DEF_W, DEF_H);
+    if (!placement) { showPageFullToast(); return; }
+
     // Create a phantom stack — deleted when the card is removed
     const stack = await api.createStack({ name: widget.title, widget_ids: [widgetId] });
     stacks.push(stack);
     phantomStackIds.add(stack.id);
 
-    const { x: gx, y: gy, w: gw, h: gh } = findFreeCellAndSize(rawX, rawY, DEF_W, DEF_H);
+    const { x: gx, y: gy, w: gw, h: gh } = placement;
     const item = buildGridItem(stack, { x: gx, y: gy, w: gw, h: gh }, "widget");
     gsEl.appendChild(item);
     grid.makeWidget(item);
@@ -2105,6 +2122,7 @@ async function openSettingsPanel(section) {
       applyTheme(theme, byId("preview-viewport"));
       previewScope.dataset.style = theme.style;
       previewScope.dataset.font  = theme.font;
+      byId("preview-viewport").style.setProperty("--widget-font-scale", st.widget_font_scale || "1");
     };
 
     let _saveTimer = null;
@@ -2124,6 +2142,7 @@ async function openSettingsPanel(section) {
           card_glow_opacity: String(st.card_glow_opacity), card_glow_size: String(st.card_glow_size),
           card_presets: JSON.stringify(presets),
           board_bg_color: st.board_bg_color,
+          widget_font_scale: String(st.widget_font_scale || "1"),
         }).then(() => {
           Object.assign(currentCardSettings, st, { card_presets: JSON.stringify(presets) });
           Object.assign(currentTheme, theme);
@@ -2309,6 +2328,31 @@ async function openSettingsPanel(section) {
       fontSel.addEventListener("change", () => { theme.font = fontSel.value; update(); });
       fontSec.appendChild(fontSel);
       controlsPane.appendChild(fontSec);
+
+      // ── Widget Scale ──────────────────────────────────────────────────────
+      const scaleSec = document.createElement("div");
+      scaleSec.className = "ds-section";
+      scaleSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Widget Scale" }));
+      const scaleRow = document.createElement("div");
+      scaleRow.className = "ds-scale-row";
+      const scaleVal = parseFloat(st.widget_font_scale || "1");
+      const scaleSlider = Object.assign(document.createElement("input"), {
+        type: "range", min: "0.75", max: "2", step: "0.05",
+        value: String(scaleVal), className: "ds-scale-slider",
+      });
+      const scaleLabel = Object.assign(document.createElement("span"), {
+        className: "ds-scale-label", textContent: Math.round(scaleVal * 100) + "%",
+      });
+      scaleSlider.addEventListener("input", () => {
+        const v = scaleSlider.value;
+        scaleLabel.textContent = Math.round(parseFloat(v) * 100) + "%";
+        st.widget_font_scale = v;
+        update();
+      });
+      scaleRow.appendChild(scaleSlider);
+      scaleRow.appendChild(scaleLabel);
+      scaleSec.appendChild(scaleRow);
+      controlsPane.appendChild(scaleSec);
 
       // ── Background section ────────────────────────────────────────────────
       const bgSec = document.createElement("div");
@@ -2917,6 +2961,7 @@ async function init() {
   Object.assign(currentCardSettings, settings);
   applyTheme(currentTheme, byId("preview-viewport"));
   applyCardStyle(currentCardSettings, byId("preview-viewport"));
+  byId("preview-viewport").style.setProperty("--widget-font-scale", settings.widget_font_scale || "1");
   if (settings.board_bg_color) { const _vp = byId("preview-viewport"); if (_vp) _vp.style.backgroundColor = settings.board_bg_color; }
   dispW = parseInt(settings.disp_w || "") || 1920;
   dispH = parseInt(settings.disp_h || "") || 720;
@@ -2961,6 +3006,16 @@ async function init() {
   );
 
   grid.on("change", () => saveLayoutSoon());
+
+  grid.on("resizestop", (_ev, el) => {
+    const n = el.gridstackNode;
+    if (!n) return;
+    let { x, y, w, h } = n;
+    let snapped = false;
+    if (y <= 1)              { h += y; y = 0;          snapped = true; }
+    if (y + h >= ROWS - 1)  { h = ROWS - y;            snapped = true; }
+    if (snapped) grid.update(el, { x, y, w, h });
+  });
 
   let lastMouseX = 0, lastMouseY = 0;
   let isDraggingGridItem = false, currentDraggedEl = null, mergeCandidateEl = null;

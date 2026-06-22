@@ -120,3 +120,4 @@ class SettingsPatch(BaseModel):
     board_bg_color:      Optional[str] = None
     onboarding_done:     Optional[str] = None
     tips_enabled:        Optional[str] = None
+    widget_font_scale:   Optional[str] = None
