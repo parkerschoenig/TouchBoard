@@ -74,8 +74,10 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
             resp.raise_for_status()
             raw = resp.json()
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 429 and cache_key in _cache:
-            return _cache[cache_key][1]
+        if e.response.status_code == 429:
+            if cache_key in _cache:
+                return _cache[cache_key][1]
+            return {"unavailable": True, "location": cfg.get("location_name", f"{lat}, {lon}")}
         raise
 
     cur    = raw.get("current", {})

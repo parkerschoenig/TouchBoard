@@ -133,6 +133,7 @@ function renderWeather(widget, data) {
   const wrap = el("div", "w-weather");
 
   if (!data) { wrap.appendChild(el("div", "w-empty", "Loading weather…")); return wrap; }
+  if (data.unavailable) { wrap.appendChild(el("div", "w-empty", "Weather temporarily unavailable")); return wrap; }
   if (data.error) { wrap.appendChild(el("div", "w-error", "Error: " + data.error)); return wrap; }
 
   const unitSym = data.unit === "fahrenheit" ? "°F" : "°C";
