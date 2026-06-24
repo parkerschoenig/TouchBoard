@@ -104,6 +104,11 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     # ── Traffic ──────────────────────────────────────────────────────────────
     ifaces_raw = (traffic_raw or {}).get("interfaces", {})
 
+    # Temporary: show first interface's raw fields so we can see the byte field names
+    if ifaces_raw:
+        first_key = next(iter(ifaces_raw))
+        return {"error": f"DEBUG first iface '{first_key}': {ifaces_raw[first_key]}"}
+
     now_ts      = time.monotonic()
     prev        = _prev.get(widget_id, {})
     prev_ts     = prev.get("ts", now_ts)
