@@ -34,7 +34,7 @@ const MIN_W   = 2;   // minimum card width in grid units
 const MIN_H   = 2;   // minimum card height in grid units
 const DEF_W   = 6;   // default drop width
 const DEF_H   = 4;   // default drop height
-const INTEGRATION_TYPES = new Set(["proxmox", "truenas", "netbox", "adguard"]);
+const INTEGRATION_TYPES = new Set(["proxmox", "truenas", "netbox", "adguard", "opnsense"]);
 
 let board          = { columns: COLS, pages: [{ id: 1, name: "Page 1", layout: [] }] };
 let currentPageIdx = 0;
@@ -120,13 +120,14 @@ const WIDGET_TYPES = [
   { type: "netbox",  label: "NetBox",   icon: "🗄️" },
   { type: "truenas", label: "TrueNAS",  icon: "💾" },
   { type: "proxmox", label: "Proxmox",  icon: "🖥️" },
-  { type: "adguard", label: "AdGuard",  icon: "🛡️" },
+  { type: "adguard",  label: "AdGuard",   icon: "🛡️" },
+  { type: "opnsense", label: "OPNsense",  icon: "🔥" },
 ];
 
 const WIDGET_CATEGORIES = [
   { label: "Utilities",    types: ["clock", "weather"],                        color: "#f59e0b" },
   { label: "Ping",         types: ["ping"],                                    color: "#a78bfa" },
-  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard"], color: "#34d399" },
+  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense"], color: "#34d399" },
 ];
 
 function typeColor(type) {
@@ -564,10 +565,12 @@ async function openWidgetModal(w = null) {
       getConfig = () => ({});
     } else if (t === "adguard") {
       getConfig = () => ({});
+    } else if (t === "opnsense") {
+      getConfig = () => ({});
     }
 
     // Integration picker for types that need a data source
-    const intTypes = { netbox: "netbox", truenas: "truenas", proxmox: "proxmox", adguard: "adguard" };
+    const intTypes = { netbox: "netbox", truenas: "truenas", proxmox: "proxmox", adguard: "adguard", opnsense: "opnsense" };
     if (intTypes[t]) {
       const intHead = Object.assign(document.createElement("div"), {
         className: "sb-form-label", textContent: "Integration",
@@ -1442,6 +1445,14 @@ const INTEGRATION_META = {
       { key: "password", label: "Password", type: "password", placeholder: "Account password" },
     ],
     hint: "Use your AdGuard Home web interface credentials. Base URL: http://192.168.1.1:3000",
+  },
+  opnsense: {
+    label: "OPNsense", color: "#f97316",
+    fields: [
+      { key: "api_key",    label: "API Key",    type: "password", placeholder: "API key" },
+      { key: "api_secret", label: "API Secret", type: "password", placeholder: "API secret" },
+    ],
+    hint: "Create an API key under System → Access → Users → Edit user → API Keys. Base URL: https://192.168.1.1",
   },
 };
 

@@ -1,14 +1,15 @@
 """Integration registry. Each module exposes `async def fetch(widget, data_source) -> dict`."""
-from . import ping, proxmox, truenas, netbox, weather, clock, adguard
+from . import ping, proxmox, truenas, netbox, weather, clock, adguard, opnsense
 
 REGISTRY = {
-    "ping":     ping.fetch,
-    "weather":  weather.fetch,
-    "clock":    clock.fetch,
-    "proxmox":  proxmox.fetch,
-    "truenas":  truenas.fetch,
-    "netbox":   netbox.fetch,
-    "adguard":  adguard.fetch,
+    "ping":      ping.fetch,
+    "weather":   weather.fetch,
+    "clock":     clock.fetch,
+    "proxmox":   proxmox.fetch,
+    "truenas":   truenas.fetch,
+    "netbox":    netbox.fetch,
+    "adguard":   adguard.fetch,
+    "opnsense":  opnsense.fetch,
 }
 
 

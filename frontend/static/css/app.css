@@ -2263,6 +2263,47 @@ body.login-page {
   text-align: center; line-height: 1.2;
 }
 
+/* ── OPNsense widget ───────────────────────────────────────────────────── */
+.w-opnsense {
+  display: flex; flex-direction: column; height: 100%;
+  padding: 8px; box-sizing: border-box; gap: 6px;
+  container-type: inline-size;
+}
+.op-header {
+  display: flex; justify-content: space-around; align-items: center;
+  flex-shrink: 0; padding: 4px 0;
+}
+.op-donut-wrap {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.op-donut {
+  width: clamp(44px, 12cqw, 72px) !important;
+  height: clamp(44px, 12cqw, 72px) !important;
+}
+.op-donut-label {
+  font-size: clamp(9px, 2.5cqw, 12px); color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.op-iface-table {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+  min-height: 0;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.1) transparent;
+}
+.op-iface-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 4px; border-radius: 4px;
+  font-size: clamp(10px, 3cqw, 13px);
+}
+.op-iface-row:hover { background: rgba(255,255,255,.04); }
+.op-iface-name {
+  flex: 1; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.op-iface-tx { color: #f97316; white-space: nowrap; }
+.op-iface-rx { color: #3b82f6; white-space: nowrap; }
+.widget--light .op-iface-name { color: #1e293b !important; }
+.widget--light .op-donut-label { color: #475569 !important; }
+
 /* Integration-stack blocked toast */
 .integration-toast {
   position: fixed; top: 24px; left: 50%; transform: translateX(-50%);

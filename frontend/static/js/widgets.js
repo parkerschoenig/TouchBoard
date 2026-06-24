@@ -898,7 +898,52 @@ function renderAdGuard(widget, data) {
   return wrap;
 }
 
-const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard };
+function renderOpnsense(widget, data) {
+  const wrap = el("div", "w-opnsense");
+  if (!data) { wrap.appendChild(el("div", "w-empty", "Loading OPNsense…")); return wrap; }
+  if (data.error) { wrap.appendChild(el("div", "w-error", data.error)); return wrap; }
+
+  function fmtRate(mbps) {
+    if (mbps < 1) return (mbps * 1000).toFixed(1) + " kb/s";
+    return mbps.toFixed(1) + " Mb/s";
+  }
+
+  // ── Header donuts ─────────────────────────────────────────────────────────
+  const hdr = el("div", "op-header");
+
+  for (const { pct, color, label } of [
+    { pct: data.cpu_pct, color: "#f97316", label: "CPU" },
+    { pct: data.mem_pct, color: "#3b82f6", label: "Memory" },
+  ]) {
+    const wrap2 = el("div", "op-donut-wrap");
+    const donut = _buildDonut([{ color, pct }], { text: pct?.toFixed(0) + "%", color });
+    donut.classList.add("op-donut");
+    wrap2.appendChild(donut);
+    wrap2.appendChild(el("div", "op-donut-label", label));
+    hdr.appendChild(wrap2);
+  }
+  wrap.appendChild(hdr);
+
+  // ── Interface table ───────────────────────────────────────────────────────
+  const table = el("div", "op-iface-table");
+  const ifaces = data.interfaces || [];
+  if (!ifaces.length) {
+    table.appendChild(el("div", "w-empty", "No interfaces"));
+  } else {
+    for (const iface of ifaces) {
+      const row = el("div", "op-iface-row");
+      row.appendChild(el("span", "op-iface-name", iface.name || iface.device));
+      const tx = el("span", "op-iface-tx", "↑ " + fmtRate(iface.tx_mbps));
+      const rx = el("span", "op-iface-rx", "↓ " + fmtRate(iface.rx_mbps));
+      row.append(tx, rx);
+      table.appendChild(row);
+    }
+  }
+  wrap.appendChild(table);
+  return wrap;
+}
+
+const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard, opnsense: renderOpnsense };
 
 // Public: build the full widget card (title + body) for a given envelope.
 // opts.editable = true shows per-widget controls (theme toggle, color picker).
