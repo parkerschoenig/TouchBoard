@@ -665,10 +665,14 @@ function renderTruenas(widget, data) {
 
     const page = el("div", "tn-page-memory");
 
+    const freeColor = widget.config?.tn_free_color || "#3b82f6";
+    const arcColor  = widget.config?.tn_arc_color  || "#9333ea";
+    const svcColor  = widget.config?.tn_svc_color  || "#f97316";
+
     page.appendChild(_buildDonut([
-      { color: "#3b82f6", pct: freePct },
-      { color: "#9333ea", pct: arcPct  },
-      { color: "#f97316", pct: svcPct  },
+      { color: freeColor, pct: freePct },
+      { color: arcColor,  pct: arcPct  },
+      { color: svcColor,  pct: svcPct  },
     ]));
 
     const legend = el("div", "tn-mem-legend");
@@ -679,9 +683,9 @@ function renderTruenas(widget, data) {
     legend.appendChild(totalRow);
     // Coloured rows
     for (const [color, label, bytes] of [
-      ["#3b82f6", "Free",      free],
-      ["#9333ea", "ZFS Cache", arc ],
-      ["#f97316", "Services",  svc ],
+      [freeColor, "Free",      free],
+      [arcColor,  "ZFS Cache", arc ],
+      [svcColor,  "Services",  svc ],
     ]) {
       if (bytes <= 0) continue;
       const row = el("div", "tn-mem-legend-row");
@@ -946,12 +950,10 @@ function renderOpnsense(widget, data) {
 const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard, opnsense: renderOpnsense };
 
 // Public: build the full widget card (title + body) for a given envelope.
-// opts.editable = true shows per-widget controls (theme toggle, color picker).
 export function renderWidget(widget, envelope, opts = {}) {
   const card = el("div", "widget");
   if (widget.config?.widget_theme === "light") card.classList.add("widget--light");
 
-  // Build body first so control closures can reference it
   const body = el("div", "widget-body");
   const data = envelope?.data ?? null;
   if (data?.error) {
@@ -963,55 +965,114 @@ export function renderWidget(widget, envelope, opts = {}) {
   const head = el("div", "widget-head");
   head.appendChild(el("span", "widget-title", widget.title));
 
-  if (opts.editable) {
-    const ctrlBar = el("div", "widget-ctrl-bar");
-
-    // Theme toggle — all widget types
-    const isLight = widget.config?.widget_theme === "light";
-    const themeBtn = el("button", "widget-ctrl widget-ctrl-theme");
-    themeBtn.title = isLight ? "Switch to dark" : "Switch to light";
-    themeBtn.dataset.tip = "Toggle light/dark text";
-    themeBtn.textContent = isLight ? "☾" : "☀";
-    themeBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const next = widget.config?.widget_theme === "light" ? "dark" : "light";
-      await _saveWidgetConfig(widget, { widget_theme: next });
-      card.classList.toggle("widget--light", next === "light");
-      themeBtn.textContent = next === "light" ? "☾" : "☀";
-      themeBtn.title       = next === "light" ? "Switch to dark" : "Switch to light";
-    });
-    ctrlBar.appendChild(themeBtn);
-
-    // Paintbrush — NetBox role colors
-    if (widget.type === "netbox") {
-      const brushBtn = el("button", "widget-ctrl widget-ctrl-brush");
-      brushBtn.title = "Edit role colors";
-      brushBtn.dataset.tip = "Edit device role colors";
-      brushBtn.textContent = "🖌";
-      brushBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        _openNetBoxColorPicker(brushBtn, widget, envelope?.data);
-      });
-      ctrlBar.appendChild(brushBtn);
-    }
-
-    // Paintbrush — Proxmox bar colors
-    if (widget.type === "proxmox") {
-      const brushBtn = el("button", "widget-ctrl widget-ctrl-brush");
-      brushBtn.title = "Edit bar colors";
-      brushBtn.dataset.tip = "Edit CPU/RAM bar colors";
-      brushBtn.textContent = "🖌";
-      brushBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        _openProxmoxColorPicker(brushBtn, widget, body);
-      });
-      ctrlBar.appendChild(brushBtn);
-    }
-
-    head.appendChild(ctrlBar);
-  }
-
   card.appendChild(head);
   card.appendChild(body);
   return card;
+}
+
+// Public: open the appearance + configure popover for a widget card (called from layout-editor).
+// anchor   — the edit button element (popover positions below it)
+// widget   — the widget object (mutated in place by _saveWidgetConfig)
+// data     — latest fetched data (for NetBox role list)
+// onConfig — callback to open the stack/widget config modal
+export function openWidgetAppearancePopover(anchor, widget, data, onConfig) {
+  _openPopover(anchor, (pop) => {
+    // ── Appearance ───────────────────────────────────────────────────────
+    pop.appendChild(el("div", "wc-title", "Appearance"));
+
+    const isLight = widget?.config?.widget_theme === "light";
+    const togRow = el("div", "wc-color-row");
+    const togLbl = el("span", "wc-color-label", "Light text mode");
+    const togInp = document.createElement("input");
+    togInp.type = "checkbox"; togInp.className = "wc-theme-toggle"; togInp.checked = isLight;
+    togInp.addEventListener("change", async () => {
+      const next = togInp.checked ? "light" : "dark";
+      await _saveWidgetConfig(widget, { widget_theme: next });
+      const widgetEl = anchor.closest(".layout-stack-card")?.querySelector(".widget");
+      if (widgetEl) widgetEl.classList.toggle("widget--light", next === "light");
+    });
+    togRow.append(togLbl, togInp);
+    pop.appendChild(togRow);
+
+    // ── Proxmox bar colors ────────────────────────────────────────────────
+    if (widget?.type === "proxmox") {
+      pop.appendChild(el("div", "wc-sub-head", "Bar Colors"));
+      const defaults = { px_cpu_color: "#3b82f6", px_ram_color: "#9333ea" };
+      for (const [key, label] of [["px_cpu_color", "CPU"], ["px_ram_color", "RAM"]]) {
+        const row = el("div", "wc-color-row");
+        const inp = document.createElement("input");
+        inp.type = "color"; inp.className = "wc-color-input";
+        inp.value = widget.config?.[key] || defaults[key];
+        const barType = key === "px_cpu_color" ? "cpu" : "ram";
+        inp.addEventListener("input", (e) => {
+          anchor.closest(".layout-stack-card")?.querySelectorAll(`.px-bar-fill[data-bar-type="${barType}"]`)
+            .forEach(f => (f.style.background = e.target.value));
+        });
+        inp.addEventListener("change", (e) => _saveWidgetConfig(widget, { [key]: e.target.value }));
+        row.append(inp, el("span", "wc-color-label", label));
+        pop.appendChild(row);
+      }
+    }
+
+    // ── TrueNAS memory colors ─────────────────────────────────────────────
+    if (widget?.type === "truenas") {
+      pop.appendChild(el("div", "wc-sub-head", "Memory Colors"));
+      const tnDefs = { tn_free_color: "#3b82f6", tn_arc_color: "#9333ea", tn_svc_color: "#f97316" };
+      for (const [key, label] of [
+        ["tn_free_color", "Free"],
+        ["tn_arc_color",  "ZFS Cache"],
+        ["tn_svc_color",  "Services"],
+      ]) {
+        const row = el("div", "wc-color-row");
+        const inp = document.createElement("input");
+        inp.type = "color"; inp.className = "wc-color-input";
+        inp.value = widget.config?.[key] || tnDefs[key];
+        inp.addEventListener("change", (e) => _saveWidgetConfig(widget, { [key]: e.target.value }));
+        row.append(inp, el("span", "wc-color-label", label));
+        pop.appendChild(row);
+      }
+    }
+
+    // ── NetBox role colors ────────────────────────────────────────────────
+    if (widget?.type === "netbox") {
+      pop.appendChild(el("div", "wc-sub-head", "Device Role Colors"));
+      const devices = data?.rack?.devices || [];
+      const roles   = [...new Set(devices.map(d => d.role).filter(Boolean))];
+      if (!roles.length) {
+        pop.appendChild(el("div", "wc-msg", "No roles found. Open Rack Elevation view first."));
+      } else {
+        const saved = { ...(widget.config?.nb_role_colors || {}) };
+        for (const role of roles) {
+          const row = el("div", "wc-color-row");
+          const inp = document.createElement("input");
+          inp.type = "color"; inp.className = "wc-color-input";
+          inp.value = saved[role] || "#3b82f6";
+          inp.addEventListener("input", (e) => {
+            saved[role] = e.target.value;
+            document.querySelectorAll(".nb-rack-device").forEach(block => {
+              if (block.querySelector(".nb-rack-device-role")?.textContent.trim() === role)
+                block.style.setProperty("--dev-color", e.target.value);
+            });
+          });
+          inp.addEventListener("change", () =>
+            _saveWidgetConfig(widget, { nb_role_colors: { ...(widget.config?.nb_role_colors || {}), ...saved } })
+          );
+          row.append(inp, el("span", "wc-color-label", role));
+          pop.appendChild(row);
+        }
+      }
+    }
+
+    // ── Configure button ──────────────────────────────────────────────────
+    if (onConfig) {
+      const divider = el("div", "wc-divider");
+      pop.appendChild(divider);
+      const cfgBtn = el("button", "wc-configure-btn", "Configure Stack / Widget");
+      cfgBtn.addEventListener("click", () => {
+        document.querySelectorAll(".wc-popover-wrap").forEach(e => e.remove());
+        onConfig();
+      });
+      pop.appendChild(cfgBtn);
+    }
+  });
 }

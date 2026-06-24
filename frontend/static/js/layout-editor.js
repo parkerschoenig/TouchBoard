@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { renderWidget } from "./widgets.js";
+import { renderWidget, openWidgetAppearancePopover } from "./widgets.js";
 import { STYLES, FONTS, THEME_PRESETS, applyTheme, applyCardStyle, hexToRgba } from "./theme.js";
 
 let currentTheme = { style: "classic", font: "inter" };
@@ -1014,11 +1014,13 @@ function buildPlacedContent(stack, initialPage = 0) {
   actions.className = "layout-card-actions";
 
   const editBtn = document.createElement("button");
-  editBtn.className = "layout-card-btn"; editBtn.title = "Edit"; editBtn.textContent = "✎";
-  editBtn.dataset.tip = "Edit widget or stack";
+  editBtn.className = "layout-card-btn"; editBtn.title = "Edit / Appearance"; editBtn.textContent = "✎";
+  editBtn.dataset.tip = "Edit widget appearance and stack settings";
   editBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    openStackModal(stack);
+    const currentWidget = validWidgets[pageIdx];
+    const envelope = currentWidget ? liveData[currentWidget.id] : null;
+    openWidgetAppearancePopover(editBtn, currentWidget, envelope?.data, () => openStackModal(stack));
   });
 
   const removeBtn = document.createElement("button");
