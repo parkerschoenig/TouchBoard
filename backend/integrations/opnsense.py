@@ -32,7 +32,7 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     auth      = (api_key, api_secret)
     widget_id = str(widget.get("id", "default"))
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT, verify=False) as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT, verify=False, follow_redirects=True) as client:
         try:
             cpu_r, mem_r, traffic_r = await asyncio.gather(
                 client.get(f"{base_url}/api/diagnostics/cpu_usage", auth=auth),
