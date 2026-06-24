@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,6 +24,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="TouchBoard", lifespan=lifespan)
 app.include_router(api_router)
+
+
+class NoCacheJSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.endswith(".js"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+app.add_middleware(NoCacheJSMiddleware)
 
 
 @app.get("/login")
