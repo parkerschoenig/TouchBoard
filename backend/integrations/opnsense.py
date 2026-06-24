@@ -59,6 +59,9 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     if errors:
         return {"error": " | ".join(errors)}
 
+    # Temporary: expose raw activity so we can see the actual response structure
+    return {"_debug_activity": activity_raw}
+
     # ── CPU ──────────────────────────────────────────────────────────────────
     # getActivity returns {"cpu-usage": [idle_pct, ...], "memory": {...}}
     # cpu-usage is a list where index 0 is total idle %
