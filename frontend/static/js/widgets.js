@@ -866,7 +866,39 @@ function renderProxmox(widget, data) {
   return wrap;
 }
 
-const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox };
+function renderAdGuard(widget, data) {
+  const wrap = el("div", "w-adguard");
+  if (!data) { wrap.appendChild(el("div", "w-empty", "Loading AdGuard…")); return wrap; }
+  if (data.error) { wrap.appendChild(el("div", "w-error", data.error)); return wrap; }
+
+  function fmt(n) {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
+    if (n >= 1_000)     return (n / 1_000).toFixed(2) + "k";
+    return String(n);
+  }
+
+  const stats = [
+    { value: fmt(data.blocked_today),          label: "Blocked today",        color: "#c0392b", icon: "🛡️" },
+    { value: data.blocked_pct.toFixed(2) + "%", label: "Blocked today",       color: "#9a7d0a", icon: "%" },
+    { value: fmt(data.queries_today),           label: "Queries today",        color: "#1a6b6b", icon: "🔍" },
+    { value: fmt(data.domains_on_blocklist),    label: "Domains on blocklist", color: "#1a6b3a", icon: "🌐" },
+  ];
+
+  const grid = el("div", "ag-grid");
+  for (const s of stats) {
+    const card = el("div", "ag-card");
+    card.style.background = s.color;
+    const iconEl = el("span", "ag-icon", s.icon);
+    const valEl  = el("div", "ag-value", s.value);
+    const lblEl  = el("div", "ag-label", s.label);
+    card.append(iconEl, valEl, lblEl);
+    grid.appendChild(card);
+  }
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard };
 
 // Public: build the full widget card (title + body) for a given envelope.
 // opts.editable = true shows per-widget controls (theme toggle, color picker).

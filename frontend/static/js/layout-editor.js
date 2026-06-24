@@ -34,7 +34,7 @@ const MIN_W   = 2;   // minimum card width in grid units
 const MIN_H   = 2;   // minimum card height in grid units
 const DEF_W   = 6;   // default drop width
 const DEF_H   = 4;   // default drop height
-const INTEGRATION_TYPES = new Set(["proxmox", "truenas", "netbox"]);
+const INTEGRATION_TYPES = new Set(["proxmox", "truenas", "netbox", "adguard"]);
 
 let board          = { columns: COLS, pages: [{ id: 1, name: "Page 1", layout: [] }] };
 let currentPageIdx = 0;
@@ -114,18 +114,19 @@ async function fetchLiveData() {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const WIDGET_TYPES = [
-  { type: "clock",   label: "Clock",   icon: "🕐" },
-  { type: "weather", label: "Weather", icon: "⛅" },
-  { type: "ping",    label: "Ping",    icon: "📡" },
-  { type: "netbox",  label: "NetBox",  icon: "🗄️" },
-  { type: "truenas", label: "TrueNAS", icon: "💾" },
-  { type: "proxmox", label: "Proxmox", icon: "🖥️" },
+  { type: "clock",   label: "Clock",    icon: "🕐" },
+  { type: "weather", label: "Weather",  icon: "⛅" },
+  { type: "ping",    label: "Ping",     icon: "📡" },
+  { type: "netbox",  label: "NetBox",   icon: "🗄️" },
+  { type: "truenas", label: "TrueNAS",  icon: "💾" },
+  { type: "proxmox", label: "Proxmox",  icon: "🖥️" },
+  { type: "adguard", label: "AdGuard",  icon: "🛡️" },
 ];
 
 const WIDGET_CATEGORIES = [
-  { label: "Utilities",    types: ["clock", "weather"],             color: "#f59e0b" },
-  { label: "Ping",         types: ["ping"],                         color: "#a78bfa" },
-  { label: "Integrations", types: ["netbox", "truenas", "proxmox"], color: "#34d399" },
+  { label: "Utilities",    types: ["clock", "weather"],                        color: "#f59e0b" },
+  { label: "Ping",         types: ["ping"],                                    color: "#a78bfa" },
+  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard"], color: "#34d399" },
 ];
 
 function typeColor(type) {
@@ -561,10 +562,12 @@ async function openWidgetModal(w = null) {
 
     } else if (t === "proxmox") {
       getConfig = () => ({});
+    } else if (t === "adguard") {
+      getConfig = () => ({});
     }
 
     // Integration picker for types that need a data source
-    const intTypes = { netbox: "netbox", truenas: "truenas", proxmox: "proxmox" };
+    const intTypes = { netbox: "netbox", truenas: "truenas", proxmox: "proxmox", adguard: "adguard" };
     if (intTypes[t]) {
       const intHead = Object.assign(document.createElement("div"), {
         className: "sb-form-label", textContent: "Integration",
@@ -1431,6 +1434,14 @@ const INTEGRATION_META = {
       { key: "token", label: "API Token", type: "password", placeholder: "Paste your NetBox API token" },
     ],
     hint: "Find your token in NetBox under Admin → API Tokens",
+  },
+  adguard: {
+    label: "AdGuard Home", color: "#67b346",
+    fields: [
+      { key: "username", label: "Username", placeholder: "admin" },
+      { key: "password", label: "Password", type: "password", placeholder: "Account password" },
+    ],
+    hint: "Use your AdGuard Home web interface credentials. Base URL: http://192.168.1.1:3000",
   },
 };
 

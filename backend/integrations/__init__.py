@@ -1,5 +1,5 @@
 """Integration registry. Each module exposes `async def fetch(widget, data_source) -> dict`."""
-from . import ping, proxmox, truenas, netbox, weather, clock
+from . import ping, proxmox, truenas, netbox, weather, clock, adguard
 
 REGISTRY = {
     "ping":     ping.fetch,
@@ -8,6 +8,7 @@ REGISTRY = {
     "proxmox":  proxmox.fetch,
     "truenas":  truenas.fetch,
     "netbox":   netbox.fetch,
+    "adguard":  adguard.fetch,
 }
 
 

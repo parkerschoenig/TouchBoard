@@ -2239,6 +2239,30 @@ body.login-page {
 }
 .dlh-row strong { color: #9ca3af; font-family: monospace; font-weight: 600; }
 
+/* ── AdGuard widget ──────────────────────────────────────────────────────────── */
+.w-adguard { display: flex; flex-direction: column; height: 100%; padding: 6px; box-sizing: border-box; }
+.ag-grid {
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  gap: clamp(4px, 1.2cqw, 8px); flex: 1;
+}
+.ag-card {
+  border-radius: 8px; padding: clamp(6px, 2cqw, 14px);
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  gap: clamp(2px, 0.8cqw, 6px); position: relative; overflow: hidden;
+}
+.ag-icon {
+  font-size: clamp(14px, 4cqw, 22px); opacity: 0.55;
+  position: absolute; top: clamp(4px,1cqw,8px); left: clamp(6px,1.5cqw,10px);
+}
+.ag-value {
+  font-size: clamp(16px, 6cqw, 36px); font-weight: 700; color: #fff;
+  letter-spacing: -0.02em; line-height: 1.1;
+}
+.ag-label {
+  font-size: clamp(9px, 2.5cqw, 13px); color: rgba(255,255,255,0.75);
+  text-align: center; line-height: 1.2;
+}
+
 /* Integration-stack blocked toast */
 .integration-toast {
   position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
