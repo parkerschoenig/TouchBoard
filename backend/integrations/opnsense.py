@@ -104,11 +104,6 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     # ── Traffic ──────────────────────────────────────────────────────────────
     ifaces_raw = (traffic_raw or {}).get("interfaces", {})
 
-    # Temporary: show first interface's raw fields so we can see the byte field names
-    if ifaces_raw:
-        first_key = next(iter(ifaces_raw))
-        return {"error": f"DEBUG first iface '{first_key}': {ifaces_raw[first_key]}"}
-
     now_ts      = time.monotonic()
     prev        = _prev.get(widget_id, {})
     prev_ts     = prev.get("ts", now_ts)
@@ -120,8 +115,8 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     for device, info in ifaces_raw.items():
         if device.startswith("lo"):
             continue
-        rx_bytes = int(info.get("inbytes", 0))
-        tx_bytes = int(info.get("outbytes", 0))
+        rx_bytes = int(info.get("bytes received", 0) or 0)
+        tx_bytes = int(info.get("bytes transmitted", 0) or 0)
         new_ifaces[device] = {"rx": rx_bytes, "tx": tx_bytes}
 
         if device in prev_ifaces:
