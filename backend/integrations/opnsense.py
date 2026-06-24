@@ -2,10 +2,9 @@
 
 Auth: HTTP Basic Auth (api_key + api_secret).
 
-Endpoints (OPNsense 23.x+):
-  GET /api/diagnostics/cpu_usage        → CPU idle %
-  GET /api/diagnostics/memory           → memory bytes
-  GET /api/diagnostics/traffic/interface → cumulative byte counters per interface
+Endpoints used:
+  GET /api/diagnostics/activity/getActivity  → CPU + memory stats
+  GET /api/diagnostics/traffic/interface     → cumulative byte counters per interface
 """
 import asyncio
 import time
@@ -18,7 +17,6 @@ _prev: dict = {}
 
 
 async def _get(client: httpx.AsyncClient, url: str, auth: tuple) -> tuple[dict | None, str | None]:
-    """Fetch a single endpoint. Returns (data, error_str)."""
     try:
         r = await client.get(url, auth=auth)
         if r.status_code == 401:
@@ -30,7 +28,7 @@ async def _get(client: httpx.AsyncClient, url: str, auth: tuple) -> tuple[dict |
     except httpx.HTTPStatusError as e:
         return None, f"HTTP {e.response.status_code} from {url}"
     except Exception as exc:
-        return None, f"Cannot reach {url}: {exc}"
+        return None, f"Cannot reach OPNsense: {exc}"
 
 
 async def fetch(widget: dict, data_source: dict | None) -> dict:
@@ -50,31 +48,43 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
 
     async with httpx.AsyncClient(timeout=_TIMEOUT, verify=False, follow_redirects=True) as client:
         try:
-            (cpu_raw, cpu_err), (mem_raw, mem_err), (traffic_raw, traffic_err) = await asyncio.gather(
-                _get(client, f"{base_url}/api/diagnostics/cpu_usage", auth),
-                _get(client, f"{base_url}/api/diagnostics/memory", auth),
+            (activity_raw, activity_err), (traffic_raw, traffic_err) = await asyncio.gather(
+                _get(client, f"{base_url}/api/diagnostics/activity/getActivity", auth),
                 _get(client, f"{base_url}/api/diagnostics/traffic/interface", auth),
             )
         except Exception as exc:
             return {"error": f"Cannot reach OPNsense: {exc}"}
 
-    errors = [e for e in [cpu_err, mem_err, traffic_err] if e]
+    errors = [e for e in [activity_err, traffic_err] if e]
     if errors:
         return {"error": " | ".join(errors)}
 
     # ── CPU ──────────────────────────────────────────────────────────────────
-    if isinstance(cpu_raw, dict):
-        total_cpu = cpu_raw.get("total", {})
-        idle = float(total_cpu.get("idle", 0))
-        cpu_pct = round(100.0 - idle, 1)
-    else:
-        idles = [float(c.get("idle", 0)) for c in (cpu_raw or []) if isinstance(c, dict)]
-        cpu_pct = round(100.0 - (sum(idles) / len(idles) if idles else 0.0), 1)
+    # getActivity returns {"cpu-usage": [idle_pct, ...], "memory": {...}}
+    # cpu-usage is a list where index 0 is total idle %
+    cpu_pct = 0.0
+    act = activity_raw or {}
+    cpu_usage = act.get("cpu-usage", [])
+    if isinstance(cpu_usage, list) and cpu_usage:
+        # First element is total idle %
+        try:
+            idle = float(cpu_usage[0])
+            cpu_pct = round(100.0 - idle, 1)
+        except (ValueError, TypeError):
+            pass
+    elif isinstance(cpu_usage, dict):
+        try:
+            idle = float(cpu_usage.get("idle", 0))
+            cpu_pct = round(100.0 - idle, 1)
+        except (ValueError, TypeError):
+            pass
     cpu_pct = max(0.0, min(100.0, cpu_pct))
 
     # ── Memory ───────────────────────────────────────────────────────────────
-    mem_total = int((mem_raw or {}).get("total", 0))
-    mem_used  = int((mem_raw or {}).get("real-used", (mem_raw or {}).get("used", 0)))
+    mem_info  = act.get("memory", {})
+    mem_total = int(mem_info.get("total", 0))
+    # "inuse" or "used" depending on version
+    mem_used  = int(mem_info.get("inuse", mem_info.get("used", 0)))
     mem_pct   = round(mem_used / mem_total * 100, 1) if mem_total else 0.0
 
     # ── Traffic ──────────────────────────────────────────────────────────────
