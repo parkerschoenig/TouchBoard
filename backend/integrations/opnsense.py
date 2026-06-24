@@ -2,7 +2,7 @@
 
 Auth: HTTP Basic Auth (api_key + api_secret).
 
-Endpoints:
+Endpoints (OPNsense 23.x+):
   GET /api/diagnostics/cpu_usage        → CPU idle %
   GET /api/diagnostics/memory           → memory bytes
   GET /api/diagnostics/traffic/interface → cumulative byte counters per interface
@@ -15,6 +15,22 @@ _TIMEOUT = 10.0
 
 # {widget_id: {"ts": float, "ifaces": {device: {"rx": int, "tx": int}}}}
 _prev: dict = {}
+
+
+async def _get(client: httpx.AsyncClient, url: str, auth: tuple) -> tuple[dict | None, str | None]:
+    """Fetch a single endpoint. Returns (data, error_str)."""
+    try:
+        r = await client.get(url, auth=auth)
+        if r.status_code == 401:
+            return None, "Authentication failed — check API key and secret"
+        if r.status_code == 404:
+            return None, f"404 Not Found: {url}"
+        r.raise_for_status()
+        return r.json(), None
+    except httpx.HTTPStatusError as e:
+        return None, f"HTTP {e.response.status_code} from {url}"
+    except Exception as exc:
+        return None, f"Cannot reach {url}: {exc}"
 
 
 async def fetch(widget: dict, data_source: dict | None) -> dict:
@@ -34,41 +50,35 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
 
     async with httpx.AsyncClient(timeout=_TIMEOUT, verify=False, follow_redirects=True) as client:
         try:
-            cpu_r, mem_r, traffic_r = await asyncio.gather(
-                client.get(f"{base_url}/api/diagnostics/cpu_usage", auth=auth),
-                client.get(f"{base_url}/api/diagnostics/memory", auth=auth),
-                client.get(f"{base_url}/api/diagnostics/traffic/interface", auth=auth),
+            (cpu_raw, cpu_err), (mem_raw, mem_err), (traffic_raw, traffic_err) = await asyncio.gather(
+                _get(client, f"{base_url}/api/diagnostics/cpu_usage", auth),
+                _get(client, f"{base_url}/api/diagnostics/memory", auth),
+                _get(client, f"{base_url}/api/diagnostics/traffic/interface", auth),
             )
-            cpu_r.raise_for_status()
-            mem_r.raise_for_status()
-            traffic_r.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                return {"error": "Authentication failed. Check API key and secret."}
-            return {"error": f"OPNsense API error: {e.response.status_code}"}
         except Exception as exc:
             return {"error": f"Cannot reach OPNsense: {exc}"}
 
+    errors = [e for e in [cpu_err, mem_err, traffic_err] if e]
+    if errors:
+        return {"error": " | ".join(errors)}
+
     # ── CPU ──────────────────────────────────────────────────────────────────
-    cpu_raw = cpu_r.json()
     if isinstance(cpu_raw, dict):
         total_cpu = cpu_raw.get("total", {})
         idle = float(total_cpu.get("idle", 0))
         cpu_pct = round(100.0 - idle, 1)
     else:
-        idles = [float(c.get("idle", 0)) for c in cpu_raw if isinstance(c, dict)]
-        avg_idle = sum(idles) / len(idles) if idles else 0.0
-        cpu_pct = round(100.0 - avg_idle, 1)
+        idles = [float(c.get("idle", 0)) for c in (cpu_raw or []) if isinstance(c, dict)]
+        cpu_pct = round(100.0 - (sum(idles) / len(idles) if idles else 0.0), 1)
     cpu_pct = max(0.0, min(100.0, cpu_pct))
 
     # ── Memory ───────────────────────────────────────────────────────────────
-    mem_raw   = mem_r.json()
-    mem_total = int(mem_raw.get("total", 0))
-    mem_used  = int(mem_raw.get("real-used", mem_raw.get("used", 0)))
+    mem_total = int((mem_raw or {}).get("total", 0))
+    mem_used  = int((mem_raw or {}).get("real-used", (mem_raw or {}).get("used", 0)))
     mem_pct   = round(mem_used / mem_total * 100, 1) if mem_total else 0.0
 
     # ── Traffic ──────────────────────────────────────────────────────────────
-    ifaces_raw = traffic_r.json().get("interfaces", {})
+    ifaces_raw = (traffic_raw or {}).get("interfaces", {})
 
     now_ts      = time.monotonic()
     prev        = _prev.get(widget_id, {})
