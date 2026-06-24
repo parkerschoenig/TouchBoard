@@ -3,10 +3,11 @@
 Auth: HTTP Basic Auth (api_key + api_secret).
 
 Endpoints used:
-  GET /api/diagnostics/activity/getActivity  → CPU + memory stats
+  GET /api/diagnostics/activity/getActivity  → CPU + memory (top-style header strings)
   GET /api/diagnostics/traffic/interface     → cumulative byte counters per interface
 """
 import asyncio
+import re
 import time
 import httpx
 
@@ -14,6 +15,42 @@ _TIMEOUT = 10.0
 
 # {widget_id: {"ts": float, "ifaces": {device: {"rx": int, "tx": int}}}}
 _prev: dict = {}
+
+_SIZE_RE = re.compile(r"^([\d.]+)([KMGT]?)$", re.IGNORECASE)
+_UNITS   = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4, "": 1}
+
+
+def _parse_size(s: str) -> int:
+    """Parse '258M', '2116K', '8G' → bytes."""
+    m = _SIZE_RE.match(s.strip())
+    if not m:
+        return 0
+    return int(float(m.group(1)) * _UNITS.get(m.group(2).upper(), 1))
+
+
+def _parse_headers(headers: list[str]) -> tuple[float, int, int]:
+    """Return (cpu_pct, mem_used_bytes, mem_total_bytes) from top header lines."""
+    cpu_pct  = 0.0
+    mem_used = 0
+    mem_total = 0
+
+    for line in headers:
+        # "CPU:  0.2% user,  0.0% nice,  0.0% system,  1.2% interrupt, 98.6% idle"
+        m = re.search(r"([\d.]+)%\s+idle", line)
+        if m:
+            cpu_pct = round(100.0 - float(m.group(1)), 1)
+
+        # "Mem: 109M Active, 1035M Inact, 107M Laundry, 447M Wired, 200M Buf, 258M Free"
+        if line.lstrip().startswith("Mem:"):
+            parts: dict[str, int] = {}
+            for seg in line.split(":", 1)[1].split(","):
+                seg = seg.strip().split()
+                if len(seg) == 2:
+                    parts[seg[1]] = _parse_size(seg[0])
+            mem_total = sum(parts.values())
+            mem_used  = mem_total - parts.get("Free", 0)
+
+    return cpu_pct, mem_used, mem_total
 
 
 async def _get(client: httpx.AsyncClient, url: str, auth: tuple) -> tuple[dict | None, str | None]:
@@ -59,36 +96,10 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     if errors:
         return {"error": " | ".join(errors)}
 
-    # Temporary: expose raw activity so we can see the actual response structure
-    return {"_debug_activity": activity_raw}
-
-    # ── CPU ──────────────────────────────────────────────────────────────────
-    # getActivity returns {"cpu-usage": [idle_pct, ...], "memory": {...}}
-    # cpu-usage is a list where index 0 is total idle %
-    cpu_pct = 0.0
-    act = activity_raw or {}
-    cpu_usage = act.get("cpu-usage", [])
-    if isinstance(cpu_usage, list) and cpu_usage:
-        # First element is total idle %
-        try:
-            idle = float(cpu_usage[0])
-            cpu_pct = round(100.0 - idle, 1)
-        except (ValueError, TypeError):
-            pass
-    elif isinstance(cpu_usage, dict):
-        try:
-            idle = float(cpu_usage.get("idle", 0))
-            cpu_pct = round(100.0 - idle, 1)
-        except (ValueError, TypeError):
-            pass
-    cpu_pct = max(0.0, min(100.0, cpu_pct))
-
-    # ── Memory ───────────────────────────────────────────────────────────────
-    mem_info  = act.get("memory", {})
-    mem_total = int(mem_info.get("total", 0))
-    # "inuse" or "used" depending on version
-    mem_used  = int(mem_info.get("inuse", mem_info.get("used", 0)))
-    mem_pct   = round(mem_used / mem_total * 100, 1) if mem_total else 0.0
+    # ── CPU + Memory from header strings ─────────────────────────────────────
+    headers  = (activity_raw or {}).get("headers", [])
+    cpu_pct, mem_used, mem_total = _parse_headers(headers)
+    mem_pct  = round(mem_used / mem_total * 100, 1) if mem_total else 0.0
 
     # ── Traffic ──────────────────────────────────────────────────────────────
     ifaces_raw = (traffic_raw or {}).get("interfaces", {})

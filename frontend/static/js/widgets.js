@@ -906,13 +906,6 @@ function renderOpnsense(widget, data) {
   const wrap = el("div", "w-opnsense");
   if (!data) { wrap.appendChild(el("div", "w-empty", "Loading OPNsense…")); return wrap; }
   if (data.error) { wrap.appendChild(el("div", "w-error", data.error)); return wrap; }
-  if (data._debug_activity !== undefined) {
-    const pre = document.createElement("pre");
-    pre.style.cssText = "font-size:10px;color:#8b96a5;white-space:pre-wrap;word-break:break-all;padding:8px;";
-    pre.textContent = JSON.stringify(data._debug_activity, null, 2);
-    wrap.appendChild(pre);
-    return wrap;
-  }
 
   function fmtRate(mbps) {
     if (mbps < 1) return (mbps * 1000).toFixed(1) + " kb/s";
