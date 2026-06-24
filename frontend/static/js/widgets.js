@@ -908,12 +908,18 @@ function renderOpnsense(widget, data) {
   if (data.error) { wrap.appendChild(el("div", "w-error", data.error)); return wrap; }
 
   function fmtRate(mbps) {
-    if (mbps < 1) return (mbps * 1000).toFixed(1) + " kb/s";
-    return mbps.toFixed(1) + " Mb/s";
+    if (!mbps) return "0 b/s";
+    if (mbps >= 1)     return mbps.toFixed(1) + " Mb/s";
+    if (mbps >= 0.001) return (mbps * 1000).toFixed(1) + " kb/s";
+    return Math.round(mbps * 1_000_000) + " b/s";
   }
 
-  // ── Header donuts ─────────────────────────────────────────────────────────
+  // ── Header: version badge + donuts ───────────────────────────────────────
   const hdr = el("div", "op-header");
+
+  if (data.version) {
+    hdr.appendChild(el("div", "op-version", data.version));
+  }
 
   for (const { pct, color, label } of [
     { pct: data.cpu_pct, color: "#f97316", label: "CPU" },

@@ -48,7 +48,9 @@ def _parse_headers(headers: list[str]) -> tuple[float, int, int]:
                 if len(seg) == 2:
                     parts[seg[1]] = _parse_size(seg[0])
             mem_total = sum(parts.values())
-            mem_used  = mem_total - parts.get("Free", 0)
+            # BSD: Active=recently used, Wired=kernel/non-pageable, Buf=buffer cache
+            # Inactive pages are effectively free (reclaimable), so exclude them
+            mem_used  = parts.get("Active", 0) + parts.get("Wired", 0) + parts.get("Buf", 0)
 
     return cpu_pct, mem_used, mem_total
 
@@ -85,9 +87,10 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
 
     async with httpx.AsyncClient(timeout=_TIMEOUT, verify=False, follow_redirects=True) as client:
         try:
-            (activity_raw, activity_err), (traffic_raw, traffic_err) = await asyncio.gather(
+            (activity_raw, activity_err), (traffic_raw, traffic_err), (fw_raw, _fw_err) = await asyncio.gather(
                 _get(client, f"{base_url}/api/diagnostics/activity/getActivity", auth),
                 _get(client, f"{base_url}/api/diagnostics/traffic/interface", auth),
+                _get(client, f"{base_url}/api/core/firmware/running", auth),
             )
         except Exception as exc:
             return {"error": f"Cannot reach OPNsense: {exc}"}
@@ -95,6 +98,8 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     errors = [e for e in [activity_err, traffic_err] if e]
     if errors:
         return {"error": " | ".join(errors)}
+
+    version = (fw_raw or {}).get("product_version", "")
 
     # ── CPU + Memory from header strings ─────────────────────────────────────
     headers  = (activity_raw or {}).get("headers", [])
@@ -141,6 +146,7 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
         interfaces.sort(key=lambda i: -(i["rx_mbps"] + i["tx_mbps"]))
 
     return {
+        "version":    version,
         "cpu_pct":    cpu_pct,
         "mem_pct":    mem_pct,
         "mem_used":   mem_used,
