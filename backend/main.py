@@ -26,14 +26,14 @@ app = FastAPI(title="TouchBoard", lifespan=lifespan)
 app.include_router(api_router)
 
 
-class NoCacheJSMiddleware(BaseHTTPMiddleware):
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
-        if request.url.path.endswith(".js"):
+        if request.url.path.endswith((".js", ".css")):
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
-app.add_middleware(NoCacheJSMiddleware)
+app.add_middleware(NoCacheStaticMiddleware)
 
 
 @app.get("/login")

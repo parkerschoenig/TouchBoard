@@ -20,6 +20,30 @@ async function _saveWidgetConfig(widget, patch) {
   }).catch(console.warn);
 }
 
+// ── Drag-to-move helper ───────────────────────────────────────────────────────
+
+function _makeDraggable(element, handleEl) {
+  handleEl.style.cursor = "grab";
+  handleEl.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || e.target.closest("button, input, select, textarea, a, label")) return;
+    const rect = element.getBoundingClientRect();
+    element.style.margin = "0";
+    element.style.left = rect.left + "px";
+    element.style.top  = rect.top  + "px";
+    element.style.transform = "none";
+    const ox = e.clientX - rect.left, oy = e.clientY - rect.top;
+    handleEl.style.cursor = "grabbing";
+    const move = (e) => {
+      element.style.left = Math.max(0, Math.min(window.innerWidth  - element.offsetWidth,  e.clientX - ox)) + "px";
+      element.style.top  = Math.max(0, Math.min(window.innerHeight - element.offsetHeight, e.clientY - oy)) + "px";
+    };
+    const up = () => { handleEl.style.cursor = "grab"; document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    e.preventDefault();
+  });
+}
+
 // ── Floating color-picker popover ─────────────────────────────────────────────
 
 function _openPopover(anchor, buildFn) {
@@ -30,20 +54,21 @@ function _openPopover(anchor, buildFn) {
   const pop = document.createElement("div");
   pop.className = "wc-popover";
   wrap.appendChild(pop);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "wc-popover-close";
+  closeBtn.textContent = "✕";
+  closeBtn.addEventListener("click", () => wrap.remove());
+  pop.appendChild(closeBtn);
+
   buildFn(pop, () => wrap.remove());
   const rect = anchor.getBoundingClientRect();
   pop.style.top = (rect.bottom + 6) + "px";
   requestAnimationFrame(() => {
     const left = Math.min(rect.left, window.innerWidth - pop.offsetWidth - 8);
     pop.style.left = Math.max(8, left) + "px";
+    _makeDraggable(pop, pop);
   });
-  const onOutside = (e) => {
-    if (!pop.contains(e.target) && e.target !== anchor) {
-      wrap.remove();
-      document.removeEventListener("mousedown", onOutside, true);
-    }
-  };
-  setTimeout(() => document.addEventListener("mousedown", onOutside, true), 10);
 }
 
 function _openNetBoxColorPicker(anchor, widget, data) {
@@ -281,7 +306,7 @@ function _tzNow(tz) {
   }
 }
 
-function buildAnalogSvg(style, tz) {
+function buildAnalogSvg(style, tz, color, glow, accent) {
   const { h, m, s } = _tzNow(tz);
   const ns = "http://www.w3.org/2000/svg";
   function mkEl(tag, attrs) {
@@ -299,6 +324,28 @@ function buildAnalogSvg(style, tz) {
   const mDeg = (m + s / 60) * 6;
   const sDeg = s * 6;
 
+  const glowFactor = glow != null ? Number(glow) / 100 : 1;
+  const neonC  = color  || "#22d3ee";
+  const accentC = accent || "#e879f9";
+  if (style === "neon") {
+    const ds = (r, c) => glowFactor > 0.01 ? `filter:drop-shadow(0 0 ${(r * glowFactor).toFixed(1)}px ${c})` : "";
+    svg.appendChild(mkEl("circle", { cx:50, cy:50, r:48, fill:"none", stroke:neonC, "stroke-width":"1.5", opacity:"0.7", style:ds(4, neonC) }));
+    for (const angle of [0, 90, 180, 270]) {
+      const [cx,cy] = pt(angle, 43);
+      svg.appendChild(mkEl("circle", { cx, cy, r:"2.5", fill:accentC, opacity:"0.9", style:ds(3, accentC) }));
+    }
+    const [hx,hy] = pt(hDeg, 28);
+    svg.appendChild(mkEl("line", { x1:50,y1:50,x2:hx,y2:hy, stroke:accentC, "stroke-width":"4", "stroke-linecap":"round", style:ds(4, accentC) }));
+    const [mx,my] = pt(mDeg, 38);
+    svg.appendChild(mkEl("line", { x1:50,y1:50,x2:mx,y2:my, stroke:neonC, "stroke-width":"2.5", "stroke-linecap":"round", style:ds(4, neonC) }));
+    const [sx2,sy2] = pt(sDeg, 42);
+    const [stx,sty] = pt(sDeg + 180, 10);
+    svg.appendChild(mkEl("line", { x1:stx,y1:sty,x2:sx2,y2:sy2, stroke:neonC, "stroke-width":"1.5", "stroke-linecap":"round", style:ds(3, neonC) }));
+    svg.appendChild(mkEl("circle", { cx:50,cy:50, r:"2.5", fill:accentC, style:ds(4, accentC) }));
+    return svg;
+  }
+
+  const handC = color || "white";
   if (style !== "minimal") {
     svg.appendChild(mkEl("circle", { cx:50, cy:50, r:48, fill:"none", stroke:"currentColor", "stroke-width":"1.5", opacity:"0.35" }));
   }
@@ -318,9 +365,9 @@ function buildAnalogSvg(style, tz) {
   }
 
   const [hx,hy] = pt(hDeg, 28);
-  svg.appendChild(mkEl("line", { x1:50,y1:50,x2:hx,y2:hy, stroke:"white", "stroke-width":"4.5", "stroke-linecap":"round" }));
+  svg.appendChild(mkEl("line", { x1:50,y1:50,x2:hx,y2:hy, stroke:handC, "stroke-width":"4.5", "stroke-linecap":"round" }));
   const [mx,my] = pt(mDeg, 38);
-  svg.appendChild(mkEl("line", { x1:50,y1:50,x2:mx,y2:my, stroke:"white", "stroke-width":"2.5", "stroke-linecap":"round" }));
+  svg.appendChild(mkEl("line", { x1:50,y1:50,x2:mx,y2:my, stroke:handC, "stroke-width":"2.5", "stroke-linecap":"round" }));
 
   if (style !== "minimal") {
     const [sx,sy]   = pt(sDeg, 42);
@@ -328,7 +375,7 @@ function buildAnalogSvg(style, tz) {
     svg.appendChild(mkEl("line", { x1:stx,y1:sty,x2:sx,y2:sy, stroke:"#f87171", "stroke-width":"1.5", "stroke-linecap":"round" }));
     svg.appendChild(mkEl("circle", { cx:50,cy:50, r:"2", fill:"#f87171" }));
   }
-  svg.appendChild(mkEl("circle", { cx:50,cy:50, r:"3.5", fill:"white" }));
+  svg.appendChild(mkEl("circle", { cx:50,cy:50, r:"3.5", fill:handC }));
 
   return svg;
 }
@@ -365,12 +412,23 @@ function renderClock(widget, _data) {
   const format = cfg.clock_format   || "12h";
   const style  = cfg.clock_style    || "clean";
   const tz     = cfg.clock_timezone || "";
+  const color  = cfg.clock_color    || "";
+  const accent = cfg.clock_accent   || "";
+  const glow   = cfg.clock_glow != null ? Number(cfg.clock_glow) : 100;
 
   const wrap = el("div", `w-clock wc-${style}`);
+  if (color) {
+    wrap.style.setProperty("--wc-color", color);
+    wrap.style.color = color;
+  }
+  if (style === "retro" || style === "neon") {
+    wrap.style.setProperty("--wc-glow-near", `${(glow * 0.55).toFixed(1)}%`);
+    wrap.style.setProperty("--wc-glow-far",  `${(glow * 0.20).toFixed(1)}%`);
+  }
 
   function tick() {
     while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
-    wrap.appendChild(mode === "analog" ? buildAnalogSvg(style, tz) : buildDigitalEl(format, style, tz));
+    wrap.appendChild(mode === "analog" ? buildAnalogSvg(style, tz, color, glow, accent) : buildDigitalEl(format, style, tz));
   }
 
   tick();
@@ -1052,7 +1110,7 @@ export function openWidgetAppearancePopover(anchor, widget, data, onConfig) {
           const row = el("div", "wc-color-row");
           const inp = document.createElement("input");
           inp.type = "color"; inp.className = "wc-color-input";
-          inp.value = saved[role] || "#3b82f6";
+          inp.value = _roleColor(role, widget.config);
           inp.addEventListener("input", (e) => {
             saved[role] = e.target.value;
             document.querySelectorAll(".nb-rack-device").forEach(block => {

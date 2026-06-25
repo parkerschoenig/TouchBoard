@@ -7,6 +7,28 @@ let currentCardSettings = {};
 
 const byId = (id) => document.getElementById(id);
 
+function _makeDraggable(element, handleEl) {
+  handleEl.style.cursor = "grab";
+  handleEl.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || e.target.closest("button, input, select, textarea, a, label")) return;
+    const rect = element.getBoundingClientRect();
+    element.style.margin = "0";
+    element.style.left = rect.left + "px";
+    element.style.top  = rect.top  + "px";
+    element.style.transform = "none";
+    const ox = e.clientX - rect.left, oy = e.clientY - rect.top;
+    handleEl.style.cursor = "grabbing";
+    const move = (e) => {
+      element.style.left = Math.max(0, Math.min(window.innerWidth  - element.offsetWidth,  e.clientX - ox)) + "px";
+      element.style.top  = Math.max(0, Math.min(window.innerHeight - element.offsetHeight, e.clientY - oy)) + "px";
+    };
+    const up = () => { handleEl.style.cursor = "grab"; document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    e.preventDefault();
+  });
+}
+
 // GridStack's bundled CSS only includes .gs-12 rules.
 // Generate rules for every column count so any `columns` value works.
 (function injectGridStackColumns(max) {
@@ -170,23 +192,20 @@ function setupSectionToggles() {
 
 // ── widget sidebar section ────────────────────────────────────────────────────
 
+const _CAT_EMPTY_HINT = {
+  "Utilities":    "Click + to add a clock or weather widget.",
+  "Ping":         "Click + to add a ping monitor.",
+  "Integrations": "Click + to connect Proxmox, TrueNAS, NetBox, AdGuard, or OPNsense.",
+};
+
 function renderWidgets() {
   const list = byId("widget-list");
   if (!list) return;
   list.innerHTML = "";
   byId("widget-count").textContent = widgets.length;
 
-  if (!widgets.length) {
-    list.appendChild(Object.assign(document.createElement("div"), {
-      className: "palette-no-stacks",
-      textContent: "No widgets yet. Click ＋ to create one.",
-    }));
-    return;
-  }
-
   for (const cat of WIDGET_CATEGORIES) {
     const catWidgets = widgets.filter((w) => cat.types.includes(w.type));
-    if (!catWidgets.length) continue;
 
     const group = document.createElement("div");
     group.className = "sb-cat-group";
@@ -198,11 +217,41 @@ function renderWidgets() {
     const arrow = Object.assign(document.createElement("span"), { className: "sb-arrow sb-cat-arrow", textContent: "▾" });
     const label = Object.assign(document.createElement("span"), { className: "sb-cat-label", textContent: cat.label });
     const count = Object.assign(document.createElement("span"), { className: "sb-cat-count", textContent: catWidgets.length });
-    header.append(arrow, label, count);
+
+    const btnGroup = document.createElement("div");
+    btnGroup.className = "sb-cat-btn-group";
+
+    if (cat.label === "Ping") {
+      const targetsBtn = Object.assign(document.createElement("button"), {
+        className: "sb-cat-targets-btn", textContent: "Configure Ping Targets and Groups", title: "Manage ping targets and groups",
+      });
+      targetsBtn.addEventListener("click", (e) => { e.stopPropagation(); openSettingsPanel("Ping Targets"); });
+      btnGroup.appendChild(targetsBtn);
+    }
+
+    const addBtn = Object.assign(document.createElement("button"), {
+      className: "sb-cat-add-btn", textContent: "＋", title: `New ${cat.label} widget`,
+    });
+    addBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (cat.label === "Integrations") openIntegrationWizard();
+      else openWidgetModal(null, { typeFilter: cat.types });
+    });
+    btnGroup.appendChild(addBtn);
+
+    header.append(arrow, label, count, btnGroup);
 
     const body = document.createElement("div");
     body.className = "sb-cat-body";
-    for (const w of catWidgets) body.appendChild(buildWidgetItem(w));
+
+    if (catWidgets.length) {
+      for (const w of catWidgets) body.appendChild(buildWidgetItem(w));
+    } else {
+      body.appendChild(Object.assign(document.createElement("div"), {
+        className: "palette-no-stacks sb-cat-empty",
+        textContent: _CAT_EMPTY_HINT[cat.label] || "Click + to add a widget.",
+      }));
+    }
 
     header.addEventListener("click", () => {
       const hidden = body.style.display === "none";
@@ -375,52 +424,84 @@ function buildPingLibraryPicker(w) {
     else { ungrouped.push(t); }
   }
 
-  const checkboxes = new Map();
+  function buildGroup(name, targets) {
+    const groupEl = document.createElement("div");
+    groupEl.className = "pp-group";
 
-  function addRow(t) {
-    const lbl = document.createElement("label");
-    lbl.className = "ping-picker-row";
-    const cb = document.createElement("input");
-    cb.type = "checkbox"; cb.className = "ping-picker-cb"; cb.checked = selectedIds.has(t.id);
-    cb.addEventListener("change", () => { if (cb.checked) selectedIds.add(t.id); else selectedIds.delete(t.id); });
-    checkboxes.set(t.id, cb);
-    lbl.append(cb, Object.assign(document.createElement("span"), { className: "ping-picker-label", textContent: t.label || t.address }));
-    wrap.appendChild(lbl);
+    const head = document.createElement("div");
+    head.className = "pp-group-head";
+
+    const arrow = Object.assign(document.createElement("span"), { className: "pp-group-arrow", textContent: "▼" });
+    const nameSpan = Object.assign(document.createElement("span"), { className: "pp-group-name", textContent: name });
+    const countBadge = document.createElement("span");
+    countBadge.className = "pp-count-badge";
+
+    function updateCount() {
+      const sel = targets.filter(t => selectedIds.has(t.id)).length;
+      countBadge.textContent = `${sel} / ${targets.length}`;
+    }
+
+    const selectAllBtn = Object.assign(document.createElement("button"), { type: "button", className: "pp-select-all-btn" });
+
+    function updateSelectAll() {
+      const allSel = targets.every(t => selectedIds.has(t.id));
+      selectAllBtn.textContent = allSel ? "Deselect All" : "Select All";
+    }
+
+    selectAllBtn.addEventListener("click", () => {
+      const allSel = targets.every(t => selectedIds.has(t.id));
+      for (const t of targets) {
+        if (allSel) selectedIds.delete(t.id); else selectedIds.add(t.id);
+      }
+      body.querySelectorAll(".pp-chip").forEach((chip, i) => {
+        chip.classList.toggle("pp-chip-selected", selectedIds.has(targets[i].id));
+      });
+      updateCount(); updateSelectAll();
+    });
+
+    head.append(arrow, nameSpan, countBadge, selectAllBtn);
+
+    const body = document.createElement("div");
+    body.className = "pp-group-body";
+
+    for (const t of targets) {
+      const chip = Object.assign(document.createElement("button"), {
+        type: "button",
+        className: "pp-chip" + (selectedIds.has(t.id) ? " pp-chip-selected" : ""),
+        textContent: t.label || t.address,
+      });
+      chip.addEventListener("click", () => {
+        if (selectedIds.has(t.id)) selectedIds.delete(t.id); else selectedIds.add(t.id);
+        chip.classList.toggle("pp-chip-selected", selectedIds.has(t.id));
+        updateCount(); updateSelectAll();
+      });
+      body.appendChild(chip);
+    }
+
+    head.addEventListener("click", (e) => {
+      if (e.target === selectAllBtn || selectAllBtn.contains(e.target)) return;
+      const collapsed = body.classList.toggle("pp-group-body-collapsed");
+      arrow.style.transform = collapsed ? "rotate(-90deg)" : "";
+    });
+
+    updateCount(); updateSelectAll();
+    groupEl.append(head, body);
+    return groupEl;
   }
 
   for (const [grp, targets] of Object.entries(groups)) {
-    const grpHead = document.createElement("div");
-    grpHead.className = "ping-picker-group";
-    const grpCb = document.createElement("input");
-    grpCb.type = "checkbox"; grpCb.className = "ping-picker-cb";
-    grpCb.checked = targets.every(t => selectedIds.has(t.id));
-    grpCb.addEventListener("change", () => {
-      for (const t of targets) {
-        if (grpCb.checked) selectedIds.add(t.id); else selectedIds.delete(t.id);
-        const cb = checkboxes.get(t.id);
-        if (cb) cb.checked = grpCb.checked;
-      }
-    });
-    grpHead.append(grpCb, Object.assign(document.createElement("span"), { className: "ping-picker-group-name", textContent: grp }));
-    wrap.appendChild(grpHead);
-    for (const t of targets) addRow(t);
+    wrap.appendChild(buildGroup(grp, targets));
   }
 
   if (ungrouped.length) {
-    if (Object.keys(groups).length) {
-      const uHead = document.createElement("div");
-      uHead.className = "ping-picker-group";
-      uHead.appendChild(Object.assign(document.createElement("span"), { className: "ping-picker-group-name", textContent: "Ungrouped" }));
-      wrap.appendChild(uHead);
-    }
-    for (const t of ungrouped) addRow(t);
+    wrap.appendChild(buildGroup("Ungrouped", ungrouped));
   }
 
   wrap.getSelectedIds = () => [...selectedIds];
   return wrap;
 }
 
-async function openWidgetModal(w = null) {
+async function openWidgetModal(w = null, opts = {}) {
   const dlg = byId("widget-modal");
   dlg.innerHTML = "";
 
@@ -442,18 +523,21 @@ async function openWidgetModal(w = null) {
   });
   body.appendChild(makeSbRow("Name", nameInput));
 
-  let type = w?.type || "clock";
+  const availableTypes = opts.typeFilter
+    ? WIDGET_TYPES.filter(wt => opts.typeFilter.includes(wt.type))
+    : WIDGET_TYPES;
+  let type = opts.defaultType || w?.type || availableTypes[0]?.type || "clock";
 
-  // Type selector (new widget only)
+  // Type selector (new widget only; hidden when only one type available)
   const typeSel = document.createElement("select");
   typeSel.className = "sb-form-input";
-  for (const wt of WIDGET_TYPES) {
+  for (const wt of availableTypes) {
     const opt = document.createElement("option");
     opt.value = wt.type; opt.textContent = wt.label;
     if (wt.type === type) opt.selected = true;
     typeSel.appendChild(opt);
   }
-  if (!w) body.appendChild(makeSbRow("Type", typeSel));
+  if (!w && availableTypes.length > 1) body.appendChild(makeSbRow("Type", typeSel));
 
   // Config section — rebuilt when type changes
   const cfgWrap = document.createElement("div");
@@ -488,13 +572,156 @@ async function openWidgetModal(w = null) {
     if (t === "clock") {
       const modeSel  = sel([["digital","Digital"],["analog","Analog"]], cfg.clock_mode || "digital");
       const fmtSel   = sel([["12h","12-hour"],["24h","24-hour"]], cfg.clock_format || "12h");
-      const styleSel = sel([["minimal","Minimal"],["full","Full"]], cfg.clock_style || "minimal");
-      const tzInp    = inp("e.g. America/Phoenix", cfg.clock_timezone || "");
-      cfgWrap.append(makeSbRow("Mode", modeSel), makeSbRow("Format", fmtSel), makeSbRow("Style", styleSel), makeSbRow("Timezone", tzInp));
-      getConfig = () => ({ clock_mode: modeSel.value, clock_format: fmtSel.value, clock_style: styleSel.value, clock_timezone: tzInp.value.trim() });
+
+      const DIGITAL_STYLES = [["minimal","Minimal"],["full","Bold"],["retro","Retro"],["neon","Neon"],["mono","Matrix"]];
+      const ANALOG_STYLES  = [["minimal","Minimal"],["classic","Classic"],["modern","Modern"],["neon","Neon"]];
+      const STYLE_COLORS   = { minimal:"#e6edf3", full:"#e6edf3", retro:"#f97316", neon:"#22d3ee", mono:"#4ade80", classic:"#ffffff", modern:"#ffffff" };
+
+      const styleSel = document.createElement("select");
+      styleSel.className = "sb-form-input";
+      function updateStyleOptions() {
+        const cur = styleSel.value || cfg.clock_style || "minimal";
+        const opts = modeSel.value === "analog" ? ANALOG_STYLES : DIGITAL_STYLES;
+        styleSel.innerHTML = "";
+        let found = false;
+        for (const [v, l] of opts) {
+          const o = Object.assign(document.createElement("option"), { value: v, textContent: l });
+          if (v === cur) { o.selected = true; found = true; }
+          styleSel.appendChild(o);
+        }
+        if (!found) styleSel.options[0].selected = true;
+      }
+      updateStyleOptions();
+
+      const tzInp = inp("e.g. America/Phoenix", cfg.clock_timezone || "");
+
+      const colorInp = document.createElement("input");
+      colorInp.type = "color";
+      colorInp.className = "sb-form-input";
+      colorInp.style.cssText = "width:44px;height:32px;padding:2px 4px;cursor:pointer;";
+      function getDefaultColor() { return STYLE_COLORS[styleSel.value] || "#e6edf3"; }
+      colorInp.value = cfg.clock_color || getDefaultColor();
+
+      const glowSlider = document.createElement("input");
+      glowSlider.type = "range";
+      glowSlider.min = "0"; glowSlider.max = "100"; glowSlider.step = "5";
+      glowSlider.className = "sb-form-input";
+      glowSlider.style.cssText = "padding:0;height:22px;cursor:pointer;";
+      glowSlider.value = cfg.clock_glow != null ? cfg.clock_glow : 100;
+
+      const previewEl = document.createElement("div");
+      previewEl.className = "wm-clock-preview";
+
+      function _digitalTick(fmt, style, tz, color, glow) {
+        let h, m, s;
+        try {
+          const parts = new Intl.DateTimeFormat("en", { timeZone: tz || undefined, hour: "numeric", minute: "numeric", second: "numeric", hour12: false }).formatToParts(new Date());
+          h = +parts.find(p => p.type === "hour").value;
+          m = +parts.find(p => p.type === "minute").value;
+          s = +parts.find(p => p.type === "second").value;
+        } catch { const n = new Date(); h = n.getHours(); m = n.getMinutes(); s = n.getSeconds(); }
+
+        let ampm = "";
+        if (fmt === "12h") { ampm = h >= 12 ? "PM" : "AM"; h = h % 12 || 12; }
+        const hm  = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+        const sec = String(s).padStart(2,"0");
+
+        const THEMES = {
+          minimal: { color:"#e6edf3", font:"inherit",                          weight:200, size:54, ls:"-4px", showSec:false },
+          full:    { color:"#e6edf3", font:"inherit",                          weight:700, size:44, ls:"-2px", showSec:true },
+          retro:   { color:"#f97316", font:"'Courier New', monospace",         weight:700, size:42, ls:"2px",  showSec:true, shadow:"0 0 14px rgba(249,115,22,.5)" },
+          neon:    { color:"#22d3ee", font:"'Orbitron', sans-serif",           weight:600, size:38, ls:"3px",  showSec:true, shadow:"0 0 18px rgba(34,211,238,.55),0 0 40px rgba(34,211,238,.2)" },
+          mono:    { color:"#4ade80", font:"'Courier New', monospace",         weight:400, size:44, ls:"3px",  showSec:true },
+        };
+        const t = THEMES[style] || THEMES.minimal;
+        const c = color || t.color;
+        const glowFactor = glow != null ? Number(glow) / 100 : 1;
+        function _hexGlow(hex, alpha) {
+          const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+          return `rgba(${r},${g},${b},${(alpha * glowFactor).toFixed(2)})`;
+        }
+        let shadow = null;
+        if (style === "retro") shadow = `0 0 14px ${_hexGlow(c, 0.5)}`;
+        else if (style === "neon") shadow = `0 0 18px ${_hexGlow(c, 0.55)},0 0 40px ${_hexGlow(c, 0.2)}`;
+
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "display:flex;align-items:center;justify-content:center;width:100%;height:100%;";
+
+        const inner = document.createElement("div");
+        inner.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;";
+
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:baseline;gap:6px;";
+        const hmEl = document.createElement("span");
+        hmEl.textContent = hm;
+        hmEl.style.cssText = `font-size:${t.size}px;font-weight:${t.weight};letter-spacing:${t.ls};line-height:1;font-variant-numeric:tabular-nums;color:${c};font-family:${t.font};${shadow ? `text-shadow:${shadow};` : ""}`;
+        row.appendChild(hmEl);
+        if (t.showSec) {
+          const secEl = document.createElement("span");
+          secEl.textContent = sec;
+          secEl.style.cssText = `font-size:20px;font-weight:300;color:${c};opacity:0.45;font-variant-numeric:tabular-nums;font-family:${t.font};${shadow ? `text-shadow:${shadow};` : ""}`;
+          row.appendChild(secEl);
+        }
+        inner.appendChild(row);
+        if (ampm) {
+          const ampmEl = document.createElement("div");
+          ampmEl.textContent = ampm;
+          ampmEl.style.cssText = `font-size:${style === "minimal" ? 17 : 14}px;font-weight:500;color:${c};opacity:0.65;font-family:${t.font};`;
+          inner.appendChild(ampmEl);
+        }
+        wrap.appendChild(inner);
+        return wrap;
+      }
+
+      let _previewTimer = null;
+      function updateClockPreview() {
+        clearInterval(_previewTimer);
+        const mode = modeSel.value, fmt = fmtSel.value, style = styleSel.value;
+        const tz = tzInp.value.trim(), color = colorInp.value, glow = Number(glowSlider.value);
+        previewEl.innerHTML = "";
+        if (mode === "analog") {
+          const clockEl = renderWidget({ id: -99, type: "clock", title: "", config: { clock_mode: "analog", clock_style: style, clock_timezone: tz, clock_color: color, clock_glow: glow, clock_accent: accentColorInp.value } }, null);
+          clockEl.style.cssText = "width:100px;height:100px;flex:none;padding:0;overflow:visible;";
+          previewEl.appendChild(clockEl);
+        } else {
+          previewEl.appendChild(_digitalTick(fmt, style, tz, color, glow));
+          _previewTimer = setInterval(() => { previewEl.innerHTML = ""; previewEl.appendChild(_digitalTick(fmt, style, tz, color, glow)); }, 1000);
+        }
+      }
+
+      const glowRow = makeSbRow("Glow", glowSlider);
+
+      const accentColorInp = document.createElement("input");
+      accentColorInp.type = "color";
+      accentColorInp.className = "sb-form-input";
+      accentColorInp.style.cssText = "width:44px;height:32px;padding:2px 4px;cursor:pointer;";
+      accentColorInp.value = cfg.clock_accent || "#e879f9";
+      const accentRow = makeSbRow("Accent", accentColorInp);
+
+      function updateConditionalRows() {
+        const mode = modeSel.value, style = styleSel.value;
+        glowRow.style.display   = (style === "retro" || style === "neon") ? "" : "none";
+        accentRow.style.display = (mode === "analog" && style === "neon") ? "" : "none";
+      }
+      updateConditionalRows();
+
+      modeSel.addEventListener("change", () => { updateStyleOptions(); colorInp.value = getDefaultColor(); accentColorInp.value = "#e879f9"; glowSlider.value = 100; updateConditionalRows(); updateClockPreview(); });
+      styleSel.addEventListener("change", () => { colorInp.value = getDefaultColor(); accentColorInp.value = "#e879f9"; glowSlider.value = 100; updateConditionalRows(); updateClockPreview(); });
+      [fmtSel, colorInp, accentColorInp].forEach(el => el.addEventListener("change", updateClockPreview));
+      colorInp.addEventListener("input", updateClockPreview);
+      accentColorInp.addEventListener("input", updateClockPreview);
+      glowSlider.addEventListener("input", updateClockPreview);
+      tzInp.addEventListener("input", updateClockPreview);
+
+      cfgWrap.append(makeSbRow("Mode", modeSel), makeSbRow("Format", fmtSel), makeSbRow("Style", styleSel));
+      cfgWrap.appendChild(previewEl);
+      cfgWrap.append(makeSbRow("Color", colorInp), accentRow, glowRow, makeSbRow("Timezone", tzInp));
+      setTimeout(updateClockPreview, 0);
+
+      getConfig = () => ({ clock_mode: modeSel.value, clock_format: fmtSel.value, clock_style: styleSel.value, clock_color: colorInp.value, clock_accent: accentColorInp.value, clock_glow: Number(glowSlider.value), clock_timezone: tzInp.value.trim() });
 
     } else if (t === "weather") {
-      const locNameInp = inp("City name", cfg.location_name || "");
+      const locNameInp = inp("City name or zip code", cfg.location_name || "");
       const latInp     = inp("Latitude",  String(cfg.latitude  ?? ""));
       const lonInp     = inp("Longitude", String(cfg.longitude ?? ""));
       const unitsSel   = sel([["fahrenheit","°F"],["celsius","°C"]], cfg.units || "fahrenheit");
@@ -522,7 +749,12 @@ async function openWidgetModal(w = null) {
           }
         } finally { geoBtn.disabled = false; geoBtn.textContent = "Search location"; }
       });
-      cfgWrap.append(makeSbRow("Location", locNameInp), geoBtn, geoResults,
+      const locRow = document.createElement("div");
+      locRow.className = "wm-loc-row";
+      locNameInp.style.width = "auto";
+      locNameInp.style.flex = "1";
+      locRow.append(locNameInp, geoBtn);
+      cfgWrap.append(makeSbRow("Location", locRow), geoResults,
         makeSbRow("Latitude", latInp), makeSbRow("Longitude", lonInp),
         makeSbRow("Units", unitsSel), makeSbRow("Forecast days", daysSel));
       getConfig = () => ({ location_name: locNameInp.value.trim(), latitude: parseFloat(latInp.value), longitude: parseFloat(lonInp.value), units: unitsSel.value, forecast_days: Number(daysSel.value) });
@@ -598,13 +830,16 @@ async function openWidgetModal(w = null) {
   }
 
   buildConfigFields(type);
-  if (!w) typeSel.addEventListener("change", () => { type = typeSel.value; buildConfigFields(type); });
+  if (!w) typeSel.addEventListener("change", () => { type = typeSel.value; buildConfigFields(type); updateRefreshVisibility(); });
 
   const refreshInput = Object.assign(document.createElement("input"), {
     className: "sb-form-input", type: "number", min: "2",
     placeholder: "15", value: w?.refresh_interval_sec ?? 15,
   });
-  body.appendChild(makeSbRow("Refresh (sec)", refreshInput));
+  const refreshRow = makeSbRow("Refresh (sec)", refreshInput);
+  body.appendChild(refreshRow);
+  function updateRefreshVisibility() { refreshRow.style.display = type === "clock" ? "none" : ""; }
+  updateRefreshVisibility();
   dlg.appendChild(body);
 
   const footer = document.createElement("div");
@@ -640,7 +875,7 @@ async function openWidgetModal(w = null) {
   saveBtn.addEventListener("click", async () => {
     const finalType  = w ? w.type : type;
     const title      = nameInput.value.trim() || "Untitled";
-    const refresh    = Math.max(2, Number(refreshInput.value) || 15);
+    const refresh    = finalType === "clock" ? 0 : Math.max(2, Number(refreshInput.value) || 15);
     const configData = getConfig();
     const dsId       = configData._dsId !== undefined ? configData._dsId : (w?.data_source_id ?? null);
     delete configData._dsId;
@@ -653,13 +888,14 @@ async function openWidgetModal(w = null) {
         Object.assign(w, updated);
         reindex();
         renderWidgets(); refreshGridCards();
+        dlg.close();
       } else {
         const created = await api.createWidget({ type: finalType, title, config: configData, refresh_interval_sec: refresh, data_source_id: dsId });
         widgets.push(created);
         reindex();
         renderWidgets();
+        dlg.close();
       }
-      dlg.close();
     } catch {
       saveBtn.disabled = false; saveBtn.textContent = w ? "Save" : "Create";
     }
@@ -669,6 +905,229 @@ async function openWidgetModal(w = null) {
   dlg.appendChild(footer);
   dlg.showModal();
   nameInput.focus();
+}
+
+// ── integration wizard ────────────────────────────────────────────────────────
+
+async function openIntegrationWizard(preType = null) {
+  const dlg = byId("widget-modal");
+  dlg.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "modal-head";
+  const titleEl = Object.assign(document.createElement("h2"), { textContent: "Add Integration Widget" });
+  const closeBtn = Object.assign(document.createElement("button"), { className: "modal-close-btn", textContent: "✕" });
+  closeBtn.addEventListener("click", () => dlg.close());
+  head.append(titleEl, closeBtn);
+
+  const body = document.createElement("div");
+  body.className = "modal-body";
+
+  const footer = document.createElement("div");
+  footer.className = "modal-footer";
+
+  dlg.append(head, body, footer);
+  dlg.showModal();
+  _makeDraggable(dlg, head);
+
+  // Load sources in background; type grid doesn't need them — Step 2 does
+  let sources = [];
+  const sourcesReady = api.listDataSources().then(r => { sources = r; }).catch(() => {});
+
+  function showStep1() {
+    body.innerHTML = "";
+    footer.innerHTML = "";
+    titleEl.textContent = "Add Integration Widget";
+
+    const hint = Object.assign(document.createElement("p"), {
+      className: "wizard-step-hint",
+      textContent: "Pick the service you want to connect:",
+    });
+    body.appendChild(hint);
+
+    const grid = document.createElement("div");
+    grid.className = "wizard-type-grid";
+    for (const [key, meta] of Object.entries(INTEGRATION_META)) {
+      const wt = WIDGET_TYPES.find(w => w.type === key);
+      const tile = document.createElement("button");
+      tile.className = "wizard-type-tile";
+      tile.type = "button";
+      tile.style.setProperty("--tile-color", meta.color);
+      tile.innerHTML = `<span class="wzt-icon">${wt?.icon || "⚙️"}</span><span class="wzt-label">${meta.label}</span>`;
+      tile.addEventListener("click", () => showStep2(key));
+      grid.appendChild(tile);
+    }
+    body.appendChild(grid);
+  }
+
+  async function showStep2(type) {
+    await sourcesReady;
+    body.innerHTML = "";
+    footer.innerHTML = "";
+    const meta = INTEGRATION_META[type];
+    const wt   = WIDGET_TYPES.find(w => w.type === type);
+    titleEl.textContent = `${wt?.icon || ""} ${meta.label}`;
+
+    if (!preType) {
+      const backBtn = Object.assign(document.createElement("button"), {
+        type: "button", className: "small wizard-back-btn", textContent: "← Back",
+      });
+      backBtn.addEventListener("click", showStep1);
+      body.appendChild(backBtn);
+    }
+
+    const nameInput = Object.assign(document.createElement("input"), {
+      className: "sb-form-input", placeholder: "Widget name", value: meta.label,
+    });
+    body.appendChild(makeSbRow("Widget name", nameInput));
+
+    const compatible = sources.filter(ds => ds.type === type);
+    let useExistingId = compatible.length ? compatible[0].id : null;
+    let addNew = compatible.length === 0;
+
+    const dsSection = document.createElement("div");
+    body.appendChild(dsSection);
+
+    const errEl = Object.assign(document.createElement("div"), { className: "settings-form-error hidden" });
+    body.appendChild(errEl);
+
+    function renderDsSection() {
+      dsSection.innerHTML = "";
+
+      if (compatible.length > 0) {
+        const connLbl = Object.assign(document.createElement("div"), {
+          className: "sb-form-label", textContent: "Connection",
+        });
+        connLbl.style.marginTop = "12px";
+        dsSection.appendChild(connLbl);
+
+        const radioWrap = document.createElement("div");
+        radioWrap.className = "wizard-ds-options";
+
+        for (const ds of compatible) {
+          const lbl = document.createElement("label");
+          lbl.className = "wizard-radio-lbl";
+          const radio = Object.assign(document.createElement("input"), { type: "radio", name: "ds-choice" });
+          radio.value = String(ds.id);
+          radio.checked = !addNew && ds.id === useExistingId;
+          radio.addEventListener("change", () => { useExistingId = ds.id; addNew = false; renderDsSection(); });
+          lbl.append(radio, ` ${ds.name}`);
+          radioWrap.appendChild(lbl);
+        }
+
+        const newLbl = document.createElement("label");
+        newLbl.className = "wizard-radio-lbl";
+        const newRadio = Object.assign(document.createElement("input"), { type: "radio", name: "ds-choice" });
+        newRadio.value = "__new__";
+        newRadio.checked = addNew;
+        newRadio.addEventListener("change", () => { useExistingId = null; addNew = true; renderDsSection(); });
+        newLbl.append(newRadio, " Add new connection");
+        radioWrap.appendChild(newLbl);
+        dsSection.appendChild(radioWrap);
+      }
+
+      if (addNew) {
+        const urlInput = Object.assign(document.createElement("input"), {
+          className: "sb-form-input", placeholder: "https://…", type: "url",
+        });
+        dsSection.appendChild(makeSbRow("Base URL", urlInput));
+
+        for (const f of meta.fields) {
+          const inp = Object.assign(document.createElement("input"), {
+            className: "sb-form-input",
+            placeholder: f.placeholder || f.label,
+            type: f.type || "text",
+          });
+          inp.dataset.credKey = f.key;
+          dsSection.appendChild(makeSbRow(f.label, inp));
+        }
+
+        const guide = INTEGRATION_GUIDES[type];
+        if (guide) {
+          const gWrap = document.createElement("div");
+          gWrap.className = "intg-guide-wrap";
+          const gArrow = Object.assign(document.createElement("span"), { className: "igt-arrow", textContent: "▶" });
+          const gToggle = Object.assign(document.createElement("button"), { type: "button", className: "intg-guide-toggle" });
+          gToggle.append(gArrow, " Setup Guide");
+          const gContent = document.createElement("div");
+          gContent.className = "intg-guide-content hidden";
+          gToggle.addEventListener("click", () => {
+            const open = gContent.classList.toggle("hidden") === false;
+            gArrow.style.transform = open ? "rotate(90deg)" : "";
+            if (open) {
+              gContent.innerHTML = "";
+              const ol = Object.assign(document.createElement("ol"), { className: "igt-steps" });
+              guide.steps.forEach(s => { const li = document.createElement("li"); li.innerHTML = s; ol.appendChild(li); });
+              gContent.appendChild(ol);
+            }
+          });
+          gWrap.append(gToggle, gContent);
+          dsSection.appendChild(gWrap);
+        }
+
+        dsSection._getUrl   = () => urlInput.value.trim();
+        dsSection._getCreds = () => {
+          const creds = {};
+          for (const inp of dsSection.querySelectorAll("[data-cred-key]"))
+            if (inp.value.trim()) creds[inp.dataset.credKey] = inp.value.trim();
+          return creds;
+        };
+      }
+    }
+
+    renderDsSection();
+
+    const cancelBtn = Object.assign(document.createElement("button"), {
+      type: "button", className: "small", textContent: "Cancel",
+    });
+    cancelBtn.addEventListener("click", () => dlg.close());
+
+    const saveBtn = Object.assign(document.createElement("button"), {
+      type: "button", className: "small primary", textContent: "Create Widget",
+    });
+
+    saveBtn.addEventListener("click", async () => {
+      const title = nameInput.value.trim() || meta.label;
+      let dsId = null;
+      errEl.classList.add("hidden");
+
+      if (addNew) {
+        const url = dsSection._getUrl?.();
+        if (!url) { errEl.textContent = "Base URL is required."; errEl.classList.remove("hidden"); return; }
+        saveBtn.disabled = true; saveBtn.textContent = "Saving connection…";
+        try {
+          const ds = await api.createDataSource({ type, name: title, base_url: url, credentials: dsSection._getCreds?.() || {} });
+          sources.push(ds);
+          dsId = ds.id;
+        } catch (e) {
+          errEl.textContent = e.message || "Failed to save connection.";
+          errEl.classList.remove("hidden");
+          saveBtn.disabled = false; saveBtn.textContent = "Create Widget";
+          return;
+        }
+      } else {
+        dsId = useExistingId;
+      }
+
+      saveBtn.textContent = "Creating widget…";
+      try {
+        const created = await api.createWidget({ type, title, config: {}, refresh_interval_sec: 15, data_source_id: dsId });
+        widgets.push(created);
+        reindex();
+        dlg.close();
+        renderWidgets();
+      } catch (e) {
+        errEl.textContent = e.message || "Failed to create widget.";
+        errEl.classList.remove("hidden");
+        saveBtn.disabled = false; saveBtn.textContent = "Create Widget";
+      }
+    });
+
+    footer.append(cancelBtn, saveBtn);
+  }
+
+  if (preType) showStep2(preType);
+  else showStep1();
 }
 
 // ── palette (widget stacks) ───────────────────────────────────────────────────
@@ -757,6 +1216,13 @@ function openStackModal(stack) {
       badge.style.borderColor = badge.style.color = typeColor(w.type);
       const lbl = Object.assign(document.createElement("span"), { className: "sw-label", textContent: w.title });
 
+      const editBtn = Object.assign(document.createElement("button"), { type: "button", className: "sw-arrow", textContent: "✎", title: "Edit widget" });
+      editBtn.addEventListener("click", () => {
+        dlg.close();
+        openWidgetModal(w);
+        byId("widget-modal").addEventListener("close", () => openStackModal(stack), { once: true });
+      });
+
       const upBtn = Object.assign(document.createElement("button"), { type: "button", className: "sw-arrow", textContent: "↑" });
       upBtn.disabled = idx === 0;
       upBtn.addEventListener("click", async () => {
@@ -777,7 +1243,7 @@ function openStackModal(stack) {
         await applyOrder(arr);
       });
 
-      row.append(grip, badge, lbl, upBtn, dnBtn, x);
+      row.append(grip, badge, lbl, editBtn, upBtn, dnBtn, x);
 
       // drag-to-reorder
       row.addEventListener("dragstart", (e) => { dragSrcIdx = idx; row.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
@@ -1412,6 +1878,23 @@ const INTEGRATION_GUIDES = {
       `Base URL format: <code>http://&lt;netbox-host&gt;</code> (no trailing slash)`,
     ],
   },
+  adguard: {
+    title: "Setting up AdGuard Home access",
+    steps: [
+      `Open your AdGuard Home web interface and go to <strong>Settings → Access Settings</strong>.`,
+      `Use your AdGuard Home <strong>login username and password</strong> in the fields above.`,
+      `Base URL format: <code>http://&lt;adguard-ip&gt;:3000</code>`,
+    ],
+  },
+  opnsense: {
+    title: "Setting up OPNsense API access",
+    steps: [
+      `Log into OPNsense and go to <strong>System → Access → Users</strong>.`,
+      `Edit your user and scroll to the <strong>API Keys</strong> section. Click <strong>+</strong> to generate a key.`,
+      `Download the key file and copy the <strong>Key</strong> and <strong>Secret</strong> into the fields above.`,
+      `Base URL format: <code>https://&lt;opnsense-ip&gt;</code>`,
+    ],
+  },
 };
 
 const INTEGRATION_META = {
@@ -1423,7 +1906,7 @@ const INTEGRATION_META = {
       { key: "token_id", label: "Token ID",  placeholder: "mytoken" },
       { key: "api_key",  label: "API Key",   type: "password", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
     ],
-    hint: "Create an API token in Proxmox under Datacenter → Permissions → API Tokens. Base URL: https://host:8006",
+    hint: "",
   },
   truenas: {
     label: "TrueNAS", color: "#0095d5",
@@ -1431,14 +1914,14 @@ const INTEGRATION_META = {
       { key: "username", label: "Username", placeholder: "e.g. root" },
       { key: "password", label: "Password", type: "password", placeholder: "Account password" },
     ],
-    hint: "Enter the username and password for your TrueNAS account.",
+    hint: "",
   },
   netbox: {
     label: "NetBox", color: "#9c27b0",
     fields: [
       { key: "token", label: "API Token", type: "password", placeholder: "Paste your NetBox API token" },
     ],
-    hint: "Find your token in NetBox under Admin → API Tokens",
+    hint: "",
   },
   adguard: {
     label: "AdGuard Home", color: "#67b346",
@@ -1446,7 +1929,7 @@ const INTEGRATION_META = {
       { key: "username", label: "Username", placeholder: "admin" },
       { key: "password", label: "Password", type: "password", placeholder: "Account password" },
     ],
-    hint: "Use your AdGuard Home web interface credentials. Base URL: http://192.168.1.1:3000",
+    hint: "",
   },
   opnsense: {
     label: "OPNsense", color: "#f97316",
@@ -1454,7 +1937,7 @@ const INTEGRATION_META = {
       { key: "api_key",    label: "API Key",    type: "password", placeholder: "API key" },
       { key: "api_secret", label: "API Secret", type: "password", placeholder: "API secret" },
     ],
-    hint: "Create an API key under System → Access → Users → Edit user → API Keys. Base URL: https://192.168.1.1",
+    hint: "",
   },
 };
 
@@ -1661,7 +2144,7 @@ async function openSettingsPanel(section) {
     guideToggle.addEventListener("click", () => {
       const open = guideContent.classList.toggle("hidden") === false;
       guideArrow.style.transform = open ? "rotate(90deg)" : "";
-      if (open && !guideContent.children.length) populateGuide();
+      if (open) populateGuide();
     });
     typeSel.addEventListener("change", () => { if (!guideContent.classList.contains("hidden")) populateGuide(); });
     guideWrap.append(guideToggle, guideContent);
@@ -1852,40 +2335,22 @@ async function openSettingsPanel(section) {
     grpSectionHead.append(
       Object.assign(document.createElement("span"), { className: "settings-section-head", textContent: "Groups" }),
     );
-    const createGrpBtn = Object.assign(document.createElement("button"), { type: "button", className: "small primary", textContent: "+ Create Group" });
-    grpSectionHead.appendChild(createGrpBtn);
     contentEl.appendChild(grpSectionHead);
 
-    // Inline create-group form (hidden until button clicked)
+    // Always-visible create-group form
     const createGrpForm = document.createElement("div");
-    createGrpForm.className = "pt-add-form hidden";
+    createGrpForm.className = "pt-add-form";
     const newGrpInput = Object.assign(document.createElement("input"), { className: "sb-form-input", placeholder: "Group name" });
-    const saveGrpBtn  = Object.assign(document.createElement("button"), { type: "button", className: "small primary", textContent: "Save" });
-    const cancelGrpBtn = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "Cancel" });
-    createGrpForm.append(newGrpInput, saveGrpBtn, cancelGrpBtn);
+    const saveGrpBtn  = Object.assign(document.createElement("button"), { type: "button", className: "small primary", textContent: "+ Create" });
+    createGrpForm.append(newGrpInput, saveGrpBtn);
     contentEl.appendChild(createGrpForm);
 
-    createGrpBtn.addEventListener("click", () => {
-      createGrpForm.classList.remove("hidden");
-      createGrpBtn.classList.add("hidden");
-      newGrpInput.focus();
-    });
-    cancelGrpBtn.addEventListener("click", () => {
-      createGrpForm.classList.add("hidden");
-      createGrpBtn.classList.remove("hidden");
-      newGrpInput.value = "";
-    });
     saveGrpBtn.addEventListener("click", () => {
       const name = newGrpInput.value.trim();
       if (!name || existingGroups.includes(name)) { newGrpInput.focus(); return; }
-      // Groups only exist when targets reference them — pre-populate datalist and show it
-      // The group becomes "real" when a target is added with that group name.
-      // Store it temporarily so the add-target form can pick it up.
       if (!existingGroups.includes(name)) existingGroups.push(name);
       const opt = document.createElement("option"); opt.value = name; datalist.appendChild(opt);
       newGrpInput.value = "";
-      createGrpForm.classList.add("hidden");
-      createGrpBtn.classList.remove("hidden");
       renderGroupList();
     });
 
@@ -2596,6 +3061,7 @@ async function openSettingsPanel(section) {
   }
 
   dlg.showModal();
+  _makeDraggable(dlg, head);
 
   if (section === "Ping Targets") renderPingTargetsTab();
   else if (section === "Users") renderUsersTab();
@@ -3246,12 +3712,6 @@ async function init() {
   setupDropZone();
   setupSectionToggles();
   connectSSE();
-
-  // ── new widget button ──────────────────────────────────────────────────────
-  byId("new-widget-btn").addEventListener("click", () => {
-    byId("sb-widgets").classList.remove("collapsed");
-    openWidgetModal(null);
-  });
 
   // ── topbar settings nav ────────────────────────────────────────────────────
   for (const btn of document.querySelectorAll(".topbar-settings-btn")) {
