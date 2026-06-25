@@ -36,30 +36,60 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 
 ## Running
 
-### Docker (recommended)
+### Prerequisites
+
+- Python 3.10 or higher
+- `openssl` (standard on most Linux distributions)
+- `ping` / `iputils-ping` for ICMP monitoring (install via `apt install iputils-ping` or `dnf install iputils`)
+
+### Quick start
 
 ```bash
-docker compose up -d --build
-# Editor:  http://localhost:8011/
-# Display: http://localhost:8011/display
+git clone <repo-url>
+cd touchboard
+bash scripts/run.sh
 ```
 
-### Proxmox LXC
+On first run the script:
+1. Creates a Python virtualenv (`.venv/`)
+2. Installs Python dependencies
+3. Generates a self-signed TLS certificate (`cert.pem` / `key.pem`)
+4. Starts the server on port **8011**
 
-Create a Debian/Ubuntu LXC, copy this repo inside it, then:
-
-```bash
-bash scripts/install-lxc.sh
+```
+  Editor:  https://<your-ip>:8011/
+  Display: https://<your-ip>:8011/display
 ```
 
-Installs a Python venv and a `touchboard` systemd service on port 8011.
+Your browser will show a certificate warning the first time — click through to add a security exception. Subsequent visits will be seamless.
 
-### Local dev
+An optional port argument is supported:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+bash scripts/run.sh 9000   # run on port 9000 instead
+```
+
+### Manual setup
+
+If you prefer to control each step individually:
+
+```bash
+# 1. Create and activate a virtualenv
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Install dependencies
 pip install -r requirements.txt
-uvicorn backend.main:app --reload --port 8011
+
+# 3. Generate a self-signed certificate
+openssl req -x509 -newkey rsa:4096 \
+  -keyout key.pem -out cert.pem \
+  -days 730 -nodes -subj "/CN=touchboard"
+
+# 4. Start the server
+uvicorn backend.main:app \
+  --host 0.0.0.0 --port 8011 \
+  --ssl-keyfile key.pem --ssl-certfile cert.pem
 ```
 
 ---
@@ -69,8 +99,9 @@ uvicorn backend.main:app --reload --port 8011
 The display panel runs a kiosk browser pointed at `/display`. Install Chromium on the panel host (Raspberry Pi, mini-PC, etc.) and launch it in kiosk mode:
 
 ```bash
-chromium --kiosk --app=http://<touchboard-host>:8011/display \
-  --noerrdialogs --disable-pinch --overscroll-history-navigation=0
+chromium --kiosk --app=https://<touchboard-host>:8011/display \
+  --noerrdialogs --disable-pinch --overscroll-history-navigation=0 \
+  --ignore-certificate-errors
 ```
 
 **Auto-start on boot** (on the panel host, as your desktop user):
@@ -82,8 +113,9 @@ Description=TouchBoard kiosk
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/chromium --kiosk --app=http://<touchboard-host>:8011/display \
-  --noerrdialogs --disable-pinch --overscroll-history-navigation=0
+ExecStart=/usr/bin/chromium --kiosk --app=https://<touchboard-host>:8011/display \
+  --noerrdialogs --disable-pinch --overscroll-history-navigation=0 \
+  --ignore-certificate-errors
 Restart=always
 
 [Install]
@@ -103,7 +135,7 @@ systemctl --user enable --now kiosk.service
 | Env var | Default | Purpose |
 |---------|---------|---------|
 | `TOUCHBOARD_DB` | `./data/touchboard.db` | SQLite database path |
-| `TOUCHBOARD_SECRET_KEY` | auto-generated | Fernet key used to encrypt data-source credentials. Set this explicitly so credentials survive container recreation. |
+| `TOUCHBOARD_SECRET_KEY` | auto-generated | Fernet key used to encrypt data-source credentials. Set this explicitly so credentials survive server restarts. |
 
 Generate a secret key:
 

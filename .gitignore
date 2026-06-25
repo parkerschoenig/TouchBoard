@@ -3,6 +3,7 @@ data/
 __pycache__/
 *.pyc
 secret.key
+*.pem
 
 .claude/
 touchboard.db
