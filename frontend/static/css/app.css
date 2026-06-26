@@ -602,7 +602,7 @@ select.sb-form-input { padding: 5px 10px; }
 /* ── preview area ─────────────────────────────────────────────────────────── */
 .layout-editor-body {
   flex: 1; min-height: 0; min-width: 0;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: flex-start; justify-content: center;
   overflow: auto; padding: 16px;
   /* Noise texture — shows around the preview viewport, not inside it */
   background-color: #060912;
@@ -611,8 +611,11 @@ select.sb-form-input { padding: 5px 10px; }
   background-repeat: repeat;
 }
 /* Wraps tabs + viewport so they move as a unit; tabs pin to top-left of preview */
+/* margin:auto centers in .layout-editor-body when there's space, but collapses to 0
+   when content overflows so the top is never clipped and scroll reaches both ends */
 .preview-area {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  margin: auto;
 }
 .open-display-btn {
   margin-left: auto;

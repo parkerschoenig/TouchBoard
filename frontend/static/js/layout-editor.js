@@ -91,12 +91,14 @@ function reindex() {
 // ── preview scaling ───────────────────────────────────────────────────────────
 
 function calcPreview() {
-  const sidebarW = document.querySelector(".stack-palette")?.offsetWidth || 360;
-  const topbarH  = document.querySelector(".topbar")?.offsetHeight  || 44;
-  const tabsH    = byId("page-tabs-bar")?.offsetHeight || 0;
+  const sidebarW   = document.querySelector(".stack-palette")?.offsetWidth || 360;
+  const topbarH    = document.querySelector(".topbar")?.offsetHeight || 44;
+  const tabsH      = byId("page-tabs-bar")?.offsetHeight || 0;
+  const controlsH  = document.querySelector(".editor-controls-ref")?.offsetHeight || 0;
   const pad = 32;
+  const gaps = (tabsH ? 8 : 0) + (controlsH ? 18 : 0); // gap(8) above vp + gap(8)+margin(10) below vp
   const availW = Math.max(300, window.innerWidth  - sidebarW - pad);
-  const availH = Math.max(200, window.innerHeight - topbarH  - tabsH - pad - 18);
+  const availH = Math.max(200, window.innerHeight - topbarH  - tabsH - controlsH - gaps - pad);
   const scale  = Math.min(availW / dispW, availH / dispH, 1);
   return { w: Math.round(dispW * scale), h: Math.round(dispH * scale) };
 }
