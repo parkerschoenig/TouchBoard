@@ -1,6 +1,9 @@
 import { api } from "./api.js";
 import { renderWidget, openWidgetAppearancePopover } from "./widgets.js";
 import { STYLES, FONTS, THEME_PRESETS, applyTheme, applyCardStyle, hexToRgba } from "./theme.js";
+import { initThemeSwitcher } from "./theme-switcher.js";
+
+initThemeSwitcher();
 
 let currentTheme = { style: "classic", font: "inter" };
 let currentCardSettings = {};
@@ -56,7 +59,9 @@ const MIN_W   = 2;   // minimum card width in grid units
 const MIN_H   = 2;   // minimum card height in grid units
 const DEF_W   = 6;   // default drop width
 const DEF_H   = 4;   // default drop height
-const INTEGRATION_TYPES = new Set(["proxmox", "truenas", "netbox", "adguard", "opnsense"]);
+// Multi-page widgets cycle through several screens, so they can't be stacked.
+// Single-page widgets (calendar, clock, ping, adguard, opnsense) are stackable.
+const MULTIPAGE_TYPES = new Set(["proxmox", "truenas", "netbox", "weather"]);
 
 let board          = { columns: COLS, pages: [{ id: 1, name: "Page 1", layout: [] }] };
 let currentPageIdx = 0;
@@ -136,20 +141,22 @@ async function fetchLiveData() {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const WIDGET_TYPES = [
-  { type: "clock",   label: "Clock",    icon: "🕐" },
-  { type: "weather", label: "Weather",  icon: "⛅" },
-  { type: "ping",    label: "Ping",     icon: "📡" },
-  { type: "netbox",  label: "NetBox",   icon: "🗄️" },
-  { type: "truenas", label: "TrueNAS",  icon: "💾" },
-  { type: "proxmox", label: "Proxmox",  icon: "🖥️" },
-  { type: "adguard",  label: "AdGuard",   icon: "🛡️" },
-  { type: "opnsense", label: "OPNsense",  icon: "🔥" },
+  { type: "clock",    label: "Clock",           icon: "🕐" },
+  { type: "weather",  label: "Weather",         icon: "⛅" },
+  { type: "ping",     label: "Ping",            icon: "📡" },
+  { type: "stream",   label: "Camera / Stream", icon: "📹" },
+  { type: "netbox",   label: "NetBox",          icon: "🗄️" },
+  { type: "truenas",  label: "TrueNAS",         icon: "💾" },
+  { type: "proxmox",  label: "Proxmox",         icon: "🖥️" },
+  { type: "adguard",  label: "AdGuard",         icon: "🛡️" },
+  { type: "opnsense", label: "OPNsense",        icon: "🔥" },
+  { type: "calendar", label: "Calendar",        icon: "📅" },
 ];
 
 const WIDGET_CATEGORIES = [
-  { label: "Utilities",    types: ["clock", "weather"],                        color: "#f59e0b" },
-  { label: "Ping",         types: ["ping"],                                    color: "#a78bfa" },
-  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense"], color: "#34d399" },
+  { label: "Utilities",    types: ["clock", "weather", "stream"],                       color: "#f59e0b" },
+  { label: "Ping",         types: ["ping"],                                             color: "#a78bfa" },
+  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense", "calendar"], color: "#34d399" },
 ];
 
 function typeColor(type) {
@@ -235,6 +242,7 @@ function renderWidgets() {
     addBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (cat.label === "Integrations") openIntegrationWizard();
+      else if (cat.label === "Utilities") openUtilityWizard();
       else openWidgetModal(null, { typeFilter: cat.types });
     });
     btnGroup.appendChild(addBtn);
@@ -273,7 +281,7 @@ function buildWidgetItem(w) {
   item.addEventListener("dragstart", (e) => {
     if (e.target.closest("button")) { e.preventDefault(); return; }
     e.dataTransfer.setData("text/plain", `widget:${w.id}`);
-    if (INTEGRATION_TYPES.has(w.type)) {
+    if (MULTIPAGE_TYPES.has(w.type)) {
       e.dataTransfer.setData("application/x-tb-integration", "1");
     }
     e.dataTransfer.effectAllowed = "copy";
@@ -339,6 +347,73 @@ function makeSbRow(labelText, input) {
   lbl.className = "sb-form-label"; lbl.textContent = labelText;
   row.append(lbl, input);
   return row;
+}
+
+// ── Credential field helpers ──────────────────────────────────────────────────
+
+function makeListField(f, initialValue = "") {
+  const wrap = document.createElement("div");
+  wrap.className = "cred-list-wrap";
+  wrap.dataset.credKey = f.key;
+
+  const entries = initialValue ? initialValue.split("\n").filter(Boolean) : [];
+
+  const addBtn = Object.assign(document.createElement("button"), {
+    type: "button", className: "cred-list-add",
+    textContent: f.addLabel || `+ Add another ${f.label}`,
+  });
+
+  function addEntry(val = "") {
+    const row = document.createElement("div");
+    row.className = "cred-list-row";
+    const inp = Object.assign(document.createElement("input"), {
+      className: "sb-form-input", type: "url",
+      placeholder: f.placeholder || "https://…",
+      value: val,
+    });
+    const del = Object.assign(document.createElement("button"), {
+      type: "button", className: "cred-list-del", textContent: "×", title: "Remove",
+    });
+    del.addEventListener("click", () => row.remove());
+    row.append(inp, del);
+    wrap.insertBefore(row, addBtn);
+  }
+
+  addBtn.addEventListener("click", () => addEntry());
+  wrap.appendChild(addBtn);
+
+  if (entries.length) { for (const v of entries) addEntry(v); }
+  else addEntry();
+  wrap._getValue = () =>
+    [...wrap.querySelectorAll(".cred-list-row input")]
+      .map(i => i.value.trim()).filter(Boolean).join("\n");
+  return wrap;
+}
+
+function makeCredField(f, initialValue = "") {
+  if (f.type === "list") return makeListField(f, initialValue);
+  if (f.type === "textarea") {
+    const ta = Object.assign(document.createElement("textarea"), {
+      className: "sb-form-input", placeholder: f.placeholder || f.label, rows: 4,
+    });
+    ta.dataset.credKey = f.key;
+    if (initialValue) ta.value = initialValue;
+    return ta;
+  }
+  const inp = Object.assign(document.createElement("input"), {
+    className: "sb-form-input", placeholder: f.placeholder || f.label, type: f.type || "text",
+  });
+  inp.dataset.credKey = f.key;
+  return inp;
+}
+
+function readCredFields(container) {
+  const creds = {};
+  for (const el of container.querySelectorAll("[data-cred-key]")) {
+    const val = typeof el._getValue === "function" ? el._getValue() : el.value.trim();
+    if (val) creds[el.dataset.credKey] = val;
+  }
+  return creds;
 }
 
 // Draggable view-order list used in NetBox and TrueNAS widget config.
@@ -508,7 +583,11 @@ async function openWidgetModal(w = null, opts = {}) {
   const head = document.createElement("div");
   head.className = "modal-head";
   const titleEl = document.createElement("h2");
-  titleEl.textContent = w ? "Edit Widget" : "New Widget";
+  const inStack = w && stacks.some(s => s.widget_ids.includes(w.id) && s.widget_ids.length > 1);
+  const newTypeMeta = !w && opts.defaultType ? WIDGET_TYPES.find(x => x.type === opts.defaultType) : null;
+  if (w) titleEl.textContent = inStack ? "Edit Stack" : "Edit Widget";
+  else if (newTypeMeta) titleEl.textContent = `${newTypeMeta.icon} ${newTypeMeta.label}`;
+  else titleEl.textContent = "New Widget";
   const closeBtn = document.createElement("button");
   closeBtn.className = "modal-close-btn"; closeBtn.textContent = "✕";
   closeBtn.addEventListener("click", () => dlg.close());
@@ -517,6 +596,14 @@ async function openWidgetModal(w = null, opts = {}) {
 
   const body = document.createElement("div");
   body.className = "modal-body";
+
+  if (opts.backTo) {
+    const backBtn = Object.assign(document.createElement("button"), {
+      type: "button", className: "small wizard-back-btn", textContent: "← Back",
+    });
+    backBtn.addEventListener("click", () => opts.backTo());
+    body.appendChild(backBtn);
+  }
 
   const nameInput = Object.assign(document.createElement("input"), {
     className: "sb-form-input", placeholder: "Widget name", value: w?.title || "",
@@ -799,10 +886,32 @@ async function openWidgetModal(w = null, opts = {}) {
       getConfig = () => ({});
     } else if (t === "opnsense") {
       getConfig = () => ({});
+    } else if (t === "stream") {
+      const urlInp = inp("Stream URL (e.g. http://host/stream.m3u8)", cfg.stream_url || "");
+      cfgWrap.appendChild(makeSbRow("Stream URL", urlInp));
+      getConfig = () => ({ stream_url: urlInp.value.trim() });
+    } else if (t === "calendar") {
+      const viewSel = document.createElement("select");
+      viewSel.className = "sb-form-input";
+      for (const [v, l] of [["list", "List"], ["week", "Week (7 days)"], ["month", "Month"]]) {
+        const opt = Object.assign(document.createElement("option"), { value: v, textContent: l });
+        if ((cfg.calendar_view || "list") === v) opt.selected = true;
+        viewSel.appendChild(opt);
+      }
+      const daysInp = Object.assign(document.createElement("input"), {
+        className: "sb-form-input", type: "number", min: "1", max: "90",
+        value: cfg.days_ahead ?? 7,
+      });
+      const maxInp  = Object.assign(document.createElement("input"), {
+        className: "sb-form-input", type: "number", min: "1", max: "50",
+        value: cfg.max_events ?? 25,
+      });
+      cfgWrap.append(makeSbRow("View", viewSel), makeSbRow("Days ahead", daysInp), makeSbRow("Max events", maxInp));
+      getConfig = () => ({ calendar_view: viewSel.value, days_ahead: Number(daysInp.value) || 7, max_events: Number(maxInp.value) || 25 });
     }
 
     // Integration picker for types that need a data source
-    const intTypes = { netbox: "netbox", truenas: "truenas", proxmox: "proxmox", adguard: "adguard", opnsense: "opnsense" };
+    const intTypes = { netbox: "netbox", truenas: "truenas", proxmox: "proxmox", adguard: "adguard", opnsense: "opnsense", calendar: "google_calendar" };
     if (intTypes[t]) {
       const intHead = Object.assign(document.createElement("div"), {
         className: "sb-form-label", textContent: "Integration",
@@ -810,19 +919,97 @@ async function openWidgetModal(w = null, opts = {}) {
       intHead.style.marginTop = "12px";
       cfgWrap.appendChild(intHead);
 
-      const compatible = allDataSources.filter(ds => ds.type === intTypes[t]);
       const dsSel = document.createElement("select");
       dsSel.className = "sb-form-input";
-      const noneOpt = document.createElement("option");
-      noneOpt.value = ""; noneOpt.textContent = "— none —";
-      dsSel.appendChild(noneOpt);
-      for (const ds of compatible) {
-        const o = document.createElement("option");
-        o.value = ds.id; o.textContent = ds.name;
-        if (ds.id === w?.data_source_id) o.selected = true;
-        dsSel.appendChild(o);
+
+      function populateDsSel(sources) {
+        const prev = dsSel.value;
+        while (dsSel.options.length) dsSel.remove(0);
+        const noneOpt = document.createElement("option");
+        noneOpt.value = ""; noneOpt.textContent = "— none —";
+        dsSel.appendChild(noneOpt);
+        for (const ds of sources.filter(ds => ds.type === intTypes[t])) {
+          const o = document.createElement("option");
+          o.value = ds.id; o.textContent = ds.name;
+          dsSel.appendChild(o);
+        }
+        dsSel.value = prev || (w?.data_source_id ? String(w.data_source_id) : "");
       }
+
+      populateDsSel(allDataSources);
       cfgWrap.appendChild(makeSbRow("Data source", dsSel));
+
+      // Inline integration credential editing
+      const inlineCredsWrap = document.createElement("div");
+      inlineCredsWrap.className = "inline-creds-wrap";
+
+      function renderInlineCreds(existingCreds = null) {
+        inlineCredsWrap.innerHTML = "";
+        const dsId = Number(dsSel.value);
+        if (!dsId) return;
+        const ds = allDataSources.find(d => d.id === dsId);
+        if (!ds) return;
+        const imeta = INTEGRATION_META[ds.type] || { fields: [], hint: "" };
+        if (!imeta.fields.length) return;
+
+        const head = Object.assign(document.createElement("div"), { className: "sb-form-label", textContent: "Edit integration" });
+        head.style.marginTop = "10px";
+        inlineCredsWrap.appendChild(head);
+        if (imeta.hint) {
+          const hint = Object.assign(document.createElement("div"), { className: "settings-ds-hint", textContent: imeta.hint });
+          inlineCredsWrap.appendChild(hint);
+        }
+
+        function buildFields(creds) {
+          const existingFieldsWrap = inlineCredsWrap.querySelector(".inline-creds-fields");
+          if (existingFieldsWrap) existingFieldsWrap.remove();
+          const fieldsWrap = document.createElement("div");
+          fieldsWrap.className = "inline-creds-fields";
+          for (const f of imeta.fields) fieldsWrap.appendChild(makeSbRow(f.label, makeCredField(f, creds[f.key] ?? "")));
+          inlineCredsWrap.insertBefore(fieldsWrap, inlineCredsWrap.querySelector(".small.primary") || null);
+        }
+
+        const saveCredsBtn = Object.assign(document.createElement("button"), {
+          type: "button", className: "small primary", textContent: "Save integration",
+        });
+        saveCredsBtn.style.marginTop = "6px";
+        saveCredsBtn.addEventListener("click", async () => {
+          const credentials = readCredFields(inlineCredsWrap);
+          if (!Object.keys(credentials).length) return;
+          saveCredsBtn.disabled = true; saveCredsBtn.textContent = "Saving…";
+          try {
+            await api.updateDataSource(dsId, { credentials });
+            saveCredsBtn.textContent = "Saved ✓";
+            setTimeout(() => { saveCredsBtn.disabled = false; saveCredsBtn.textContent = "Save integration"; }, 2000);
+          } catch (e) {
+            saveCredsBtn.disabled = false; saveCredsBtn.textContent = "Save integration";
+          }
+        });
+        inlineCredsWrap.appendChild(saveCredsBtn);
+
+        if (existingCreds !== null) {
+          buildFields(existingCreds);
+        } else {
+          buildFields({});
+          api.getDataSourceCredentials(dsId).then(creds => {
+            const anyFilled = [...inlineCredsWrap.querySelectorAll("input, textarea")].some(el => el.value.trim());
+            if (!anyFilled) buildFields(creds);
+          }).catch(() => {});
+        }
+      }
+
+      dsSel.addEventListener("change", renderInlineCreds);
+      renderInlineCreds();
+      cfgWrap.appendChild(inlineCredsWrap);
+
+      // Refresh async to pick up data sources added/deleted since the modal opened
+      api.listDataSources().then(fresh => {
+        allDataSources = fresh;
+        const prevId = dsSel.value;
+        populateDsSel(fresh);
+        // Only re-render creds if the selected DS changed (e.g. deleted)
+        if (dsSel.value !== prevId) renderInlineCreds();
+      }).catch(() => {});
 
       const origGetConfig = getConfig;
       getConfig = () => ({ ...origGetConfig(), _dsId: Number(dsSel.value) || null });
@@ -907,6 +1094,50 @@ async function openWidgetModal(w = null, opts = {}) {
   nameInput.focus();
 }
 
+// ── utility wizard ─────────────────────────────────────────────────────────────
+
+// Mirrors the integration wizard: pick a utility tile (icon + label), then
+// configure & create it. Config reuses openWidgetModal with a Back button.
+function openUtilityWizard() {
+  const dlg = byId("widget-modal");
+  dlg.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "modal-head";
+  const titleEl = Object.assign(document.createElement("h2"), { textContent: "Add Utility Widget" });
+  const closeBtn = Object.assign(document.createElement("button"), { className: "modal-close-btn", textContent: "✕" });
+  closeBtn.addEventListener("click", () => dlg.close());
+  head.append(titleEl, closeBtn);
+
+  const body = document.createElement("div");
+  body.className = "modal-body";
+
+  const hint = Object.assign(document.createElement("p"), {
+    className: "wizard-step-hint",
+    textContent: "Pick the utility you want to add:",
+  });
+  body.appendChild(hint);
+
+  const grid = document.createElement("div");
+  grid.className = "wizard-type-grid";
+  const utilTypes = WIDGET_CATEGORIES.find(c => c.label === "Utilities")?.types || [];
+  for (const t of utilTypes) {
+    const wt = WIDGET_TYPES.find(x => x.type === t);
+    const tile = document.createElement("button");
+    tile.className = "wizard-type-tile";
+    tile.type = "button";
+    tile.style.setProperty("--tile-color", typeColor(t));
+    tile.innerHTML = `<span class="wzt-icon">${wt?.icon || "⚙️"}</span><span class="wzt-label">${wt?.label || t}</span>`;
+    tile.addEventListener("click", () =>
+      openWidgetModal(null, { defaultType: t, typeFilter: [t], backTo: openUtilityWizard }));
+    grid.appendChild(tile);
+  }
+  body.appendChild(grid);
+
+  dlg.append(head, body);
+  dlg.showModal();
+}
+
 // ── integration wizard ────────────────────────────────────────────────────────
 
 async function openIntegrationWizard(preType = null) {
@@ -948,7 +1179,7 @@ async function openIntegrationWizard(preType = null) {
     const grid = document.createElement("div");
     grid.className = "wizard-type-grid";
     for (const [key, meta] of Object.entries(INTEGRATION_META)) {
-      const wt = WIDGET_TYPES.find(w => w.type === key);
+      const wt = WIDGET_TYPES.find(w => w.type === (meta.widgetType || key));
       const tile = document.createElement("button");
       tile.className = "wizard-type-tile";
       tile.type = "button";
@@ -965,7 +1196,7 @@ async function openIntegrationWizard(preType = null) {
     body.innerHTML = "";
     footer.innerHTML = "";
     const meta = INTEGRATION_META[type];
-    const wt   = WIDGET_TYPES.find(w => w.type === type);
+    const wt   = WIDGET_TYPES.find(w => w.type === (meta.widgetType || type));
     titleEl.textContent = `${wt?.icon || ""} ${meta.label}`;
 
     if (!preType) {
@@ -1027,18 +1258,16 @@ async function openIntegrationWizard(preType = null) {
       }
 
       if (addNew) {
-        const urlInput = Object.assign(document.createElement("input"), {
-          className: "sb-form-input", placeholder: "https://…", type: "url",
-        });
-        dsSection.appendChild(makeSbRow("Base URL", urlInput));
+        let urlInput = null;
+        if (!meta.noBaseUrl) {
+          urlInput = Object.assign(document.createElement("input"), {
+            className: "sb-form-input", placeholder: "https://…", type: "url",
+          });
+          dsSection.appendChild(makeSbRow("Base URL", urlInput));
+        }
 
         for (const f of meta.fields) {
-          const inp = Object.assign(document.createElement("input"), {
-            className: "sb-form-input",
-            placeholder: f.placeholder || f.label,
-            type: f.type || "text",
-          });
-          inp.dataset.credKey = f.key;
+          const inp = makeCredField(f);
           dsSection.appendChild(makeSbRow(f.label, inp));
         }
 
@@ -1065,13 +1294,8 @@ async function openIntegrationWizard(preType = null) {
           dsSection.appendChild(gWrap);
         }
 
-        dsSection._getUrl   = () => urlInput.value.trim();
-        dsSection._getCreds = () => {
-          const creds = {};
-          for (const inp of dsSection.querySelectorAll("[data-cred-key]"))
-            if (inp.value.trim()) creds[inp.dataset.credKey] = inp.value.trim();
-          return creds;
-        };
+        dsSection._getUrl   = () => urlInput ? urlInput.value.trim() : "";
+        dsSection._getCreds = () => readCredFields(dsSection);
       }
     }
 
@@ -1093,10 +1317,10 @@ async function openIntegrationWizard(preType = null) {
 
       if (addNew) {
         const url = dsSection._getUrl?.();
-        if (!url) { errEl.textContent = "Base URL is required."; errEl.classList.remove("hidden"); return; }
+        if (!meta.noBaseUrl && !url) { errEl.textContent = "Base URL is required."; errEl.classList.remove("hidden"); return; }
         saveBtn.disabled = true; saveBtn.textContent = "Saving connection…";
         try {
-          const ds = await api.createDataSource({ type, name: title, base_url: url, credentials: dsSection._getCreds?.() || {} });
+          const ds = await api.createDataSource({ type, name: title, base_url: url || "https://calendar.google.com", credentials: dsSection._getCreds?.() || {} });
           sources.push(ds);
           dsId = ds.id;
         } catch (e) {
@@ -1109,9 +1333,11 @@ async function openIntegrationWizard(preType = null) {
         dsId = useExistingId;
       }
 
+      if (!dsId) return;
+
       saveBtn.textContent = "Creating widget…";
       try {
-        const created = await api.createWidget({ type, title, config: {}, refresh_interval_sec: 15, data_source_id: dsId });
+        const created = await api.createWidget({ type: meta.widgetType || type, title, config: {}, refresh_interval_sec: 15, data_source_id: dsId });
         widgets.push(created);
         reindex();
         dlg.close();
@@ -1275,7 +1501,7 @@ function openStackModal(stack) {
     const ids = currentIds();
     for (const w of widgets) {
       if (ids.includes(w.id)) continue;
-      if (INTEGRATION_TYPES.has(w.type)) continue;
+      if (MULTIPAGE_TYPES.has(w.type)) continue;
       const wEl = document.querySelector(`.sb-widget-item[data-widget-id="${w.id}"]`);
       if (!wEl) continue;
       const opt = document.createElement("option");
@@ -1356,7 +1582,7 @@ function showIntegrationToast() {
   if (!toast) {
     toast = Object.assign(document.createElement("div"), {
       id: "integration-stack-toast", className: "integration-toast",
-      textContent: "Integrations cannot be stacked",
+      textContent: "Multi-page widgets cannot be stacked",
     });
     document.body.appendChild(toast);
   }
@@ -1385,7 +1611,7 @@ function buildPlacedContent(stack, initialPage = 0) {
 
   const card = document.createElement("div");
   card.className = "layout-stack-card";
-  if (stack.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type))) {
+  if (stack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type))) {
     card.dataset.integration = "1";
   }
 
@@ -1463,7 +1689,7 @@ function buildPlacedContent(stack, initialPage = 0) {
     const raw = e.dataTransfer.getData("text/plain");
     if (!raw.startsWith("widget:")) return;
     const draggedId = Number(raw.slice(7));
-    const draggedIsIntegration = INTEGRATION_TYPES.has(widgetsById[draggedId]?.type);
+    const draggedIsIntegration = MULTIPAGE_TYPES.has(widgetsById[draggedId]?.type);
     // Both are integrations — block with toast, don't let it bubble to the viewport
     if (card.dataset.integration && draggedIsIntegration) {
       e.stopPropagation();
@@ -1519,8 +1745,8 @@ function buildPlacedContent(stack, initialPage = 0) {
 async function mergeWidgetIntoStack(stack, widgetId) {
   const widget = widgetsById[widgetId];
   if (!widget || stack.widget_ids.includes(widgetId)) return;
-  if (INTEGRATION_TYPES.has(widget.type)) return;
-  if (stack.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type))) return;
+  if (MULTIPAGE_TYPES.has(widget.type)) return;
+  if (stack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type))) return;
 
   const newIds = [...stack.widget_ids, widgetId];
   const updated = await api.updateStack(stack.id, { widget_ids: newIds });
@@ -1718,6 +1944,8 @@ function refreshWidgetArea(el, stack) {
 function onEnvelope(env) {
   liveData[env.widget_id] = env;
   if (!grid) return;
+  // Stream widgets play continuously — re-rendering would interrupt the video
+  if (widgets.find(w => w.id === env.widget_id)?.type === "stream") return;
   for (const el of grid.getGridItems()) {
     const stackId = Number(el.dataset.stackId);
     const stack   = stacks.find((s) => s.id === stackId);
@@ -1895,6 +2123,16 @@ const INTEGRATION_GUIDES = {
       `Base URL format: <code>https://&lt;opnsense-ip&gt;</code>`,
     ],
   },
+  google_calendar: {
+    title: "Getting the Google Calendar private ICS URL",
+    steps: [
+      `Open <strong>Google Calendar</strong> at calendar.google.com.`,
+      `In the left sidebar, hover over the calendar you want and click the three-dot menu → <strong>Settings and sharing</strong>.`,
+      `Scroll down to the <strong>Integrate calendar</strong> section.`,
+      `Copy the <strong>Secret address in iCal format</strong> (the URL ending in <code>.ics</code>).`,
+      `Paste it into the <strong>ICS URL</strong> field above.`,
+    ],
+  },
 };
 
 const INTEGRATION_META = {
@@ -1938,6 +2176,16 @@ const INTEGRATION_META = {
       { key: "api_secret", label: "API Secret", type: "password", placeholder: "API secret" },
     ],
     hint: "",
+  },
+  google_calendar: {
+    label: "Google Calendar", color: "#4285f4",
+    noBaseUrl: true,
+    widgetType: "calendar",
+    fields: [
+      { key: "ical_urls", label: "ICS URL", type: "list", addLabel: "+ Add another ICS URL",
+        placeholder: "https://calendar.google.com/calendar/ical/…/basic.ics" },
+    ],
+    hint: "Get each URL from Google Calendar → Settings → (calendar) → Integrate calendar → Secret address in iCal format.",
   },
 };
 
@@ -2051,14 +2299,9 @@ async function openSettingsPanel(section) {
       cardHead.append(badge, dsName, editBtn, delBtn);
       card.append(cardHead, dsUrl, secretBadge);
 
-      // Inline edit panel (toggled by ✎)
+      // Inline edit panel (built lazily on first expand)
       const editPanel = document.createElement("div");
       editPanel.className = "settings-edit-panel hidden";
-      buildEditForm(editPanel, ds, () => {
-        editPanel.classList.add("hidden");
-        editPanel.innerHTML = "";
-        renderIntegrationsTab();
-      });
       card.appendChild(editPanel);
 
       editBtn.addEventListener("click", () => {
@@ -2096,6 +2339,7 @@ async function openSettingsPanel(section) {
 
     const urlInput = Object.assign(document.createElement("input"),
       { className: "sb-form-input", placeholder: "https://…", type: "url" });
+    const urlRow = makeSbRow("Base URL", urlInput);
 
     const credFields = document.createElement("div");
     credFields.className = "settings-cred-fields";
@@ -2107,20 +2351,10 @@ async function openSettingsPanel(section) {
       credFields.innerHTML = "";
       const meta = INTEGRATION_META[typeSel.value];
       hintEl.textContent = meta.hint;
-      urlInput.placeholder = meta.fields.length ? "https://…" : "https://…";
+      urlRow.style.display = meta.noBaseUrl ? "none" : "";
       for (const f of meta.fields) {
-        const inp = Object.assign(document.createElement("input"), {
-          className: "sb-form-input",
-          placeholder: f.placeholder || f.label,
-          type: f.type || "text",
-        });
-        inp.dataset.credKey = f.key;
-        const row = document.createElement("div");
-        row.className = "sb-form-row";
-        const lbl = document.createElement("div");
-        lbl.className = "sb-form-label"; lbl.textContent = f.label;
-        row.append(lbl, inp);
-        credFields.appendChild(row);
+        const inp = makeCredField(f);
+        credFields.appendChild(makeSbRow(f.label, inp));
       }
     }
     typeSel.addEventListener("change", refreshCredFields);
@@ -2164,16 +2398,14 @@ async function openSettingsPanel(section) {
 
     saveBtn.addEventListener("click", async () => {
       const type = typeSel.value;
+      const meta = INTEGRATION_META[type];
       const name = nameInput.value.trim();
-      const base_url = urlInput.value.trim();
-      if (!name || !base_url) {
+      const base_url = meta?.noBaseUrl ? "https://calendar.google.com" : urlInput.value.trim();
+      if (!name || (!meta?.noBaseUrl && !base_url)) {
         errEl.textContent = "Name and URL are required.";
         errEl.classList.remove("hidden"); return;
       }
-      const credentials = {};
-      for (const inp of credFields.querySelectorAll("[data-cred-key]")) {
-        if (inp.value.trim()) credentials[inp.dataset.credKey] = inp.value.trim();
-      }
+      const credentials = readCredFields(credFields);
       saveBtn.disabled = true; saveBtn.textContent = "Saving…";
       try {
         await api.createDataSource({ type, name, base_url, credentials });
@@ -2189,7 +2421,7 @@ async function openSettingsPanel(section) {
     wrap.append(
       makeSbRow("Type", typeSel),
       makeSbRow("Name", nameInput),
-      makeSbRow("Base URL", urlInput),
+      urlRow,
       credFields,
       hintEl,
       guideWrap,
@@ -2216,20 +2448,27 @@ async function openSettingsPanel(section) {
 
     const credFields = document.createElement("div");
     credFields.className = "settings-cred-fields";
-    for (const f of meta.fields) {
-      const inp = Object.assign(document.createElement("input"), {
-        className: "sb-form-input",
-        placeholder: `${f.placeholder || f.label} (leave blank to keep current)`,
-        type: f.type || "text",
-      });
-      inp.dataset.credKey = f.key;
-      const row = document.createElement("div");
-      row.className = "sb-form-row";
-      const lbl = document.createElement("div");
-      lbl.className = "sb-form-label"; lbl.textContent = f.label;
-      row.append(lbl, inp);
-      credFields.appendChild(row);
+
+    function buildCredFields(existingCreds = {}) {
+      credFields.innerHTML = "";
+      for (const f of meta.fields) {
+        const existing = existingCreds[f.key] ?? "";
+        const editF = f.type === "list" ? { ...f } : { ...f, placeholder: `${f.placeholder || f.label} (leave blank to keep current)` };
+        const inp = makeCredField(editF, existing);
+        const row = document.createElement("div");
+        row.className = "sb-form-row";
+        const lbl = document.createElement("div");
+        lbl.className = "sb-form-label"; lbl.textContent = f.label;
+        row.append(lbl, inp);
+        credFields.appendChild(row);
+      }
     }
+
+    buildCredFields();
+    api.getDataSourceCredentials(ds.id).then(creds => {
+      const anyFilled = [...credFields.querySelectorAll("input, textarea")].some(el => el.value.trim());
+      if (!anyFilled) buildCredFields(creds);
+    }).catch(() => {});
 
     if (meta.hint) {
       const hintEl = document.createElement("div");
@@ -2273,15 +2512,12 @@ async function openSettingsPanel(section) {
 
     saveBtn.addEventListener("click", async () => {
       const name = nameInput.value.trim();
-      const base_url = urlInput.value.trim();
-      if (!name || !base_url) {
+      const base_url = meta.noBaseUrl ? ds.base_url : urlInput.value.trim();
+      if (!name || (!meta.noBaseUrl && !base_url)) {
         errEl.textContent = "Name and URL are required.";
         errEl.classList.remove("hidden"); return;
       }
-      const credentials = {};
-      for (const inp of credFields.querySelectorAll("[data-cred-key]")) {
-        if (inp.value.trim()) credentials[inp.dataset.credKey] = inp.value.trim();
-      }
+      const credentials = readCredFields(credFields);
       saveBtn.disabled = true; saveBtn.textContent = "Saving…";
       try {
         const body = { name, base_url };
@@ -2295,11 +2531,13 @@ async function openSettingsPanel(section) {
       }
     });
 
+    const editUrlRow = makeSbRow("Base URL", urlInput);
+    if (meta.noBaseUrl) editUrlRow.style.display = "none";
     formFooter.append(cancelBtn, saveBtn);
     wrap.append(
       typeLbl,
       makeSbRow("Name", nameInput),
-      makeSbRow("Base URL", urlInput),
+      editUrlRow,
       credFields,
       editGuideWrap,
       errEl,
@@ -2851,7 +3089,7 @@ async function openSettingsPanel(section) {
       // ── Style picker ──────────────────────────────────────────────────────
       const styleSec = document.createElement("div");
       styleSec.className = "ds-section";
-      styleSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Style" }));
+      styleSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Shape" }));
       const styleGrid = document.createElement("div");
       styleGrid.className = "ds-style-grid";
       for (const s of STYLES) {
@@ -3575,7 +3813,7 @@ async function init() {
 
     const draggedStackId = Number(currentDraggedEl.dataset.stackId);
     const draggedStack   = stacks.find(s => s.id === draggedStackId);
-    const draggedHasIntegration = draggedStack?.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type));
+    const draggedHasIntegration = draggedStack?.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
 
     let found = null;
     for (const item of grid.getGridItems()) {
@@ -3591,7 +3829,7 @@ async function init() {
       const card = item.querySelector(".layout-stack-card");
       if (!card) continue;
       const targetStack = stacks.find(s => s.id === Number(item.dataset.stackId));
-      const targetHasIntegration = targetStack?.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type));
+      const targetHasIntegration = targetStack?.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
       card.classList.toggle("merge-target", item === found && !draggedHasIntegration && !targetHasIntegration);
     }
     mergeCandidateEl = found;
@@ -3661,8 +3899,8 @@ async function init() {
       const targetStack    = stacks.find(s => s.id === targetStackId);
 
       if (draggedStack && targetStack) {
-        const draggedHasIntegration = draggedStack.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type));
-        const targetHasIntegration  = targetStack.widget_ids.some(id => INTEGRATION_TYPES.has(widgetsById[id]?.type));
+        const draggedHasIntegration = draggedStack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
+        const targetHasIntegration  = targetStack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
 
         if (draggedHasIntegration || targetHasIntegration) {
           // Revert dragged card to its original position

@@ -939,17 +939,19 @@ function renderAdGuard(widget, data) {
     return String(n);
   }
 
+  const cfg = widget.config || {};
   const stats = [
-    { value: fmt(data.blocked_today),          label: "Blocked today",        color: "#c0392b", icon: "🛡️" },
-    { value: data.blocked_pct.toFixed(2) + "%", label: "Blocked today",       color: "#9a7d0a", icon: "%" },
-    { value: fmt(data.queries_today),           label: "Queries today",        color: "#1a6b6b", icon: "🔍" },
-    { value: fmt(data.domains_on_blocklist),    label: "Domains on blocklist", color: "#1a6b3a", icon: "🌐" },
+    { value: fmt(data.blocked_today),           label: "Blocked today",        color: cfg.ag_blocked_color || "#c0392b", icon: "🛡️", stat: "blocked" },
+    { value: data.blocked_pct.toFixed(2) + "%", label: "Blocked %",            color: cfg.ag_pct_color     || "#9a7d0a", icon: "%",  stat: "pct"     },
+    { value: fmt(data.queries_today),            label: "Queries today",        color: cfg.ag_queries_color || "#1a6b6b", icon: "🔍", stat: "queries"  },
+    { value: fmt(data.domains_on_blocklist),     label: "Domains on blocklist", color: cfg.ag_domains_color || "#1a6b3a", icon: "🌐", stat: "domains"  },
   ];
 
   const grid = el("div", "ag-grid");
   for (const s of stats) {
     const card = el("div", "ag-card");
     card.style.background = s.color;
+    card.dataset.agStat = s.stat;
     const iconEl = el("span", "ag-icon", s.icon);
     const valEl  = el("div", "ag-value", s.value);
     const lblEl  = el("div", "ag-label", s.label);
@@ -972,6 +974,12 @@ function renderOpnsense(widget, data) {
     return Math.round(mbps * 1_000_000) + " b/s";
   }
 
+  const ocfg = widget.config || {};
+  const cpuColor  = ocfg.ops_cpu_color  || "#f97316";
+  const memColor  = ocfg.ops_mem_color  || "#3b82f6";
+  const upColor   = ocfg.ops_up_color   || "#22c55e";
+  const downColor = ocfg.ops_down_color || "#3b82f6";
+
   // ── Header: version badge + donuts ───────────────────────────────────────
   const hdr = el("div", "op-header");
 
@@ -979,11 +987,12 @@ function renderOpnsense(widget, data) {
     hdr.appendChild(el("div", "op-version", data.version));
   }
 
-  for (const { pct, color, label } of [
-    { pct: data.cpu_pct, color: "#f97316", label: "CPU" },
-    { pct: data.mem_pct, color: "#3b82f6", label: "Memory" },
+  for (const { pct, color, label, donutKey } of [
+    { pct: data.cpu_pct, color: cpuColor, label: "CPU",    donutKey: "cpu" },
+    { pct: data.mem_pct, color: memColor, label: "Memory", donutKey: "mem" },
   ]) {
     const wrap2 = el("div", "op-donut-wrap");
+    wrap2.dataset.opsDonut = donutKey;
     const donut = _buildDonut([{ color, pct }], { text: pct?.toFixed(0) + "%", color });
     donut.classList.add("op-donut");
     wrap2.appendChild(donut);
@@ -1003,6 +1012,8 @@ function renderOpnsense(widget, data) {
       row.appendChild(el("span", "op-iface-name", iface.name || iface.device));
       const tx = el("span", "op-iface-tx", "↑ " + fmtRate(iface.tx_mbps));
       const rx = el("span", "op-iface-rx", "↓ " + fmtRate(iface.rx_mbps));
+      tx.style.color = upColor;   tx.dataset.opsDir = "tx";
+      rx.style.color = downColor; rx.dataset.opsDir = "rx";
       row.append(tx, rx);
       table.appendChild(row);
     }
@@ -1011,7 +1022,226 @@ function renderOpnsense(widget, data) {
   return wrap;
 }
 
-const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard, opnsense: renderOpnsense };
+// ── HLS.js lazy loader (cached after first load) ──────────────────────────────
+let _hlsPromise = null;
+function _loadHlsJs() {
+  if (!_hlsPromise) {
+    _hlsPromise = new Promise((resolve) => {
+      if (window.Hls) { resolve(window.Hls); return; }
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
+      s.onload  = () => resolve(window.Hls);
+      s.onerror = () => resolve(null);
+      document.head.appendChild(s);
+    });
+  }
+  return _hlsPromise;
+}
+
+function renderStream(widget, data) {
+  const wrap = el("div", "w-stream");
+  const url = data?.url || widget.config?.stream_url || "";
+  if (!url) { wrap.appendChild(el("div", "w-empty", "No stream URL configured")); return wrap; }
+
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.muted = true;
+  video.setAttribute("playsinline", "");
+
+  const isHls = url.includes(".m3u8");
+
+  if (isHls) {
+    // Always use HLS.js for m3u8 — it handles live streams reliably across browsers
+    _loadHlsJs().then(Hls => {
+      if (Hls && Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        // Safari native HLS fallback
+        video.src = url;
+        video.play().catch(() => {});
+      }
+    });
+  } else {
+    video.src = url;
+    video.loop = true;
+    video.play().catch(() => {});
+  }
+
+  wrap.appendChild(video);
+  return wrap;
+}
+
+// ── Calendar shared helpers ───────────────────────────────────────────────────
+function _calDayKey(ev) {
+  return ev.all_day ? ev.start.slice(0, 10) : new Date(ev.start).toLocaleDateString("sv");
+}
+function _calFmtTime(iso, allDay) {
+  if (allDay) return "All day";
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+function _calToday() {
+  const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+function _calDateStr(d) { // "YYYY-MM-DD" for a local Date
+  return d.toLocaleDateString("sv");
+}
+
+// ── List view (default) ───────────────────────────────────────────────────────
+function _renderCalList(events) {
+  const wrap = el("div", "w-calendar");
+
+  function _fmtDay(iso) {
+    const today = _calToday(), tomorrow = new Date(today.getTime() + 86400000);
+    const eDay  = new Date(new Date(iso).toDateString());
+    if (+eDay === +today)    return "Today";
+    if (+eDay === +tomorrow) return "Tomorrow";
+    return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  }
+
+  const byDay = new Map();
+  for (const ev of events) {
+    const k = _calDayKey(ev);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(ev);
+  }
+  for (const [, dayEvs] of byDay) {
+    wrap.appendChild(el("div", "cal-day-header", _fmtDay(dayEvs[0].start)));
+    for (const ev of dayEvs) {
+      const row = el("div", "cal-event");
+      row.appendChild(el("span", "cal-event-time", _calFmtTime(ev.start, ev.all_day)));
+      row.appendChild(el("span", "cal-event-title", ev.title));
+      wrap.appendChild(row);
+    }
+  }
+  return wrap;
+}
+
+// ── Week view ─────────────────────────────────────────────────────────────────
+function _renderCalWeek(events) {
+  const wrap = el("div", "w-cal-week");
+  const today = _calToday();
+  const DAYS  = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+  // Build map: "YYYY-MM-DD" → events[]
+  const byDay = new Map();
+  for (const ev of events) {
+    const k = _calDayKey(ev);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(ev);
+  }
+
+  for (let i = 0; i < 7; i++) {
+    const d   = new Date(today.getTime() + i * 86400000);
+    const key = _calDateStr(d);
+    const isToday = i === 0;
+    const col  = el("div", "wcw-col");
+    const head = el("div", "wcw-head" + (isToday ? " today" : ""));
+    head.appendChild(el("span", "wcw-dow", DAYS[d.getDay()]));
+    head.appendChild(el("span", "wcw-date", String(d.getDate())));
+    col.appendChild(head);
+    const evList = el("div", "wcw-events");
+    for (const ev of byDay.get(key) || []) {
+      const chip = el("div", "wcw-event");
+      chip.appendChild(el("span", "wcw-event-time", _calFmtTime(ev.start, ev.all_day)));
+      chip.appendChild(document.createTextNode(ev.title));
+      evList.appendChild(chip);
+    }
+    col.appendChild(evList);
+    wrap.appendChild(col);
+  }
+  return wrap;
+}
+
+// ── Month view ────────────────────────────────────────────────────────────────
+function _renderCalMonth(events) {
+  const wrap  = el("div", "w-cal-month");
+  const today = _calToday();
+  const year  = today.getFullYear(), month = today.getMonth();
+
+  // Build map: "YYYY-MM-DD" → event count
+  const byDay = new Map();
+  for (const ev of events) {
+    const k = _calDayKey(ev);
+    byDay.set(k, (byDay.get(k) || 0) + 1);
+  }
+
+  const monthName = today.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  wrap.appendChild(el("div", "wcm-header", monthName));
+
+  const dowRow = el("div", "wcm-dows");
+  for (const d of ["Su","Mo","Tu","We","Th","Fr","Sa"])
+    dowRow.appendChild(el("div", "wcm-dow", d));
+  wrap.appendChild(dowRow);
+
+  const grid = el("div", "wcm-grid");
+  const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrev  = new Date(year, month, 0).getDate();
+
+  // Leading cells from previous month
+  for (let i = firstDay - 1; i >= 0; i--) {
+    const cell = el("div", "wcm-cell other-month");
+    cell.appendChild(el("div", "wcm-day-num", String(daysInPrev - i)));
+    grid.appendChild(cell);
+  }
+  // Current month cells
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date   = new Date(year, month, d);
+    const key    = _calDateStr(date);
+    const isToday = +date === +today;
+    const cell   = el("div", "wcm-cell" + (isToday ? " today" : ""));
+    cell.appendChild(el("div", "wcm-day-num", String(d)));
+    const count  = byDay.get(key) || 0;
+    if (count) {
+      const dots = el("div", "wcm-dots");
+      for (let j = 0; j < Math.min(count, 3); j++)
+        dots.appendChild(el("span", "wcm-dot"));
+      cell.appendChild(dots);
+    }
+    grid.appendChild(cell);
+  }
+  // Trailing cells
+  const total = firstDay + daysInMonth;
+  const trailing = total % 7 ? 7 - (total % 7) : 0;
+  for (let d = 1; d <= trailing; d++) {
+    const cell = el("div", "wcm-cell other-month");
+    cell.appendChild(el("div", "wcm-day-num", String(d)));
+    grid.appendChild(cell);
+  }
+
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+// ── Calendar dispatcher ───────────────────────────────────────────────────────
+function renderCalendar(widget, data) {
+  if (!data) return _renderCalList([]);
+  if (data.error) { const w = el("div", "w-calendar"); w.appendChild(el("div", "w-error", data.error)); return w; }
+  const events = data.events || [];
+  const view = widget.config?.calendar_view || "list";
+  let wrap;
+  if (!events.length) {
+    wrap = el("div", "w-calendar");
+    wrap.appendChild(el("div", "w-empty", "No upcoming events"));
+  } else if (view === "week") {
+    wrap = _renderCalWeek(events);
+  } else if (view === "month") {
+    wrap = _renderCalMonth(events);
+  } else {
+    wrap = _renderCalList(events);
+  }
+  if (data.feed_errors?.length) {
+    const note = el("div", "cal-feed-error", `⚠ ${data.feed_errors.length} feed(s) failed to load`);
+    note.title = data.feed_errors.join("\n");
+    wrap.appendChild(note);
+  }
+  return wrap;
+}
+
+const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard, opnsense: renderOpnsense, stream: renderStream, calendar: renderCalendar };
 
 // Public: build the full widget card (title + body) for a given envelope.
 export function renderWidget(widget, envelope, opts = {}) {
@@ -1078,6 +1308,41 @@ export function openWidgetAppearancePopover(anchor, widget, data, onConfig) {
       }
     }
 
+    // ── OPNsense colors ───────────────────────────────────────────────────
+    if (widget?.type === "opnsense") {
+      pop.appendChild(el("div", "wc-sub-head", "Colors"));
+      const opsDefs = { ops_cpu_color: "#f97316", ops_mem_color: "#3b82f6", ops_up_color: "#22c55e", ops_down_color: "#3b82f6" };
+      for (const [key, label, donutKey, dirKey] of [
+        ["ops_cpu_color",  "CPU",      "cpu", null],
+        ["ops_mem_color",  "Memory",   "mem", null],
+        ["ops_up_color",   "Upload",   null,  "tx"],
+        ["ops_down_color", "Download", null,  "rx"],
+      ]) {
+        const row = el("div", "wc-color-row");
+        const inp = document.createElement("input");
+        inp.type = "color"; inp.className = "wc-color-input";
+        inp.value = widget.config?.[key] || opsDefs[key];
+        inp.addEventListener("input", (e) => {
+          const wEl = anchor.closest(".layout-stack-card");
+          if (donutKey) {
+            const svg = wEl?.querySelector(`.op-donut-wrap[data-ops-donut="${donutKey}"] .tn-donut-svg`);
+            if (svg) {
+              const circles = svg.querySelectorAll("circle:not(:first-child)");
+              circles.forEach(c => c.setAttribute("stroke", e.target.value));
+              svg.querySelector("text")?.setAttribute("fill", e.target.value);
+            }
+          }
+          if (dirKey) {
+            wEl?.querySelectorAll(`[data-ops-dir="${dirKey}"]`)
+              .forEach(s => (s.style.color = e.target.value));
+          }
+        });
+        inp.addEventListener("change", (e) => _saveWidgetConfig(widget, { [key]: e.target.value }));
+        row.append(inp, el("span", "wc-color-label", label));
+        pop.appendChild(row);
+      }
+    }
+
     // ── TrueNAS memory colors ─────────────────────────────────────────────
     if (widget?.type === "truenas") {
       pop.appendChild(el("div", "wc-sub-head", "Memory Colors"));
@@ -1091,6 +1356,30 @@ export function openWidgetAppearancePopover(anchor, widget, data, onConfig) {
         const inp = document.createElement("input");
         inp.type = "color"; inp.className = "wc-color-input";
         inp.value = widget.config?.[key] || tnDefs[key];
+        inp.addEventListener("change", (e) => _saveWidgetConfig(widget, { [key]: e.target.value }));
+        row.append(inp, el("span", "wc-color-label", label));
+        pop.appendChild(row);
+      }
+    }
+
+    // ── AdGuard card colors ───────────────────────────────────────────────
+    if (widget?.type === "adguard") {
+      pop.appendChild(el("div", "wc-sub-head", "Card Colors"));
+      const agDefs = { ag_blocked_color: "#c0392b", ag_pct_color: "#9a7d0a", ag_queries_color: "#1a6b6b", ag_domains_color: "#1a6b3a" };
+      for (const [key, label, stat] of [
+        ["ag_blocked_color", "Blocked Today",   "blocked"],
+        ["ag_pct_color",     "Blocked %",       "pct"],
+        ["ag_queries_color", "Queries Today",   "queries"],
+        ["ag_domains_color", "Domains on List", "domains"],
+      ]) {
+        const row = el("div", "wc-color-row");
+        const inp = document.createElement("input");
+        inp.type = "color"; inp.className = "wc-color-input";
+        inp.value = widget.config?.[key] || agDefs[key];
+        inp.addEventListener("input", (e) => {
+          anchor.closest(".layout-stack-card")?.querySelectorAll(`.ag-card[data-ag-stat="${stat}"]`)
+            .forEach(c => (c.style.background = e.target.value));
+        });
         inp.addEventListener("change", (e) => _saveWidgetConfig(widget, { [key]: e.target.value }));
         row.append(inp, el("span", "wc-color-label", label));
         pop.appendChild(row);

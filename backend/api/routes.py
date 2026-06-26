@@ -20,7 +20,7 @@ from ..models import (
     WidgetIn,
     WidgetUpdate,
 )
-from ..poller import poller, sse_stream
+from ..poller import poller, sse_stream  # noqa: F401 (poller used for force_poll)
 
 router = APIRouter(prefix="/api")
 
@@ -166,6 +166,7 @@ def put_widget(widget_id: int, body: WidgetUpdate, user: dict = Depends(current_
     w = db.update_widget(widget_id, body.model_dump(exclude_unset=True))
     if not w:
         raise HTTPException(404, "widget not found")
+    poller._publish({"type": "widget_update", "widget_id": widget_id})
     return w
 
 
@@ -248,6 +249,8 @@ def patch_data_source(ds_id: int, body: DataSourceUpdate, user: dict = Depends(c
     updated = db.update_data_source(ds_id, data, blob)
     if not updated:
         raise HTTPException(404, "data source not found")
+    if blob:  # credentials changed — re-poll affected widgets immediately
+        poller.force_poll_datasource(ds_id)
     return updated
 
 
@@ -255,6 +258,18 @@ def patch_data_source(ds_id: int, body: DataSourceUpdate, user: dict = Depends(c
 def remove_data_source(ds_id: int, user: dict = Depends(current_user)):
     if not db.delete_data_source(ds_id):
         raise HTTPException(404, "data source not found")
+
+
+@router.get("/datasources/{ds_id}/credentials")
+def get_data_source_credentials(ds_id: int, user: dict = Depends(current_user)):
+    ds = db.get_data_source(ds_id, with_secret=True)
+    if not ds:
+        raise HTTPException(404, "data source not found")
+    creds = secrets.decrypt(ds.get("secret")) or {}
+    # Migrate legacy single ical_url → ical_urls so the list field pre-populates
+    if "ical_url" in creds and "ical_urls" not in creds:
+        creds["ical_urls"] = creds["ical_url"]
+    return creds
 
 
 # ── ping targets ──────────────────────────────────────────────────────────────
@@ -310,3 +325,4 @@ async def stream(request: Request):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+

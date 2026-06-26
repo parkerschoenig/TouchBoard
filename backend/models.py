@@ -2,8 +2,8 @@
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
-WidgetType = Literal["ping", "weather", "clock", "proxmox", "truenas", "netbox", "adguard", "opnsense"]
-SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense"]
+WidgetType = Literal["ping", "weather", "clock", "proxmox", "truenas", "netbox", "adguard", "opnsense", "stream", "calendar"]
+SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense", "google_calendar"]
 
 
 class WidgetIn(BaseModel):

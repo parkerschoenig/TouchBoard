@@ -1,6 +1,9 @@
 import { api } from "./api.js";
 import { renderWidget } from "./widgets.js";
 import { applyTheme, applyCardStyle } from "./theme.js";
+import { initThemeSwitcher } from "./theme-switcher.js";
+
+initThemeSwitcher();
 
 fetch("/api/settings").then(r => r.json()).then(s => {
   applyTheme({ style: s.theme_style, font: s.theme_font });
@@ -226,6 +229,8 @@ function cycle(stack) {
 // ── live updates ─────────────────────────────────────────────────────────────
 function onEnvelope(env) {
   envelopeCache[env.widget_id] = env;
+  // Stream widgets play continuously — re-rendering would interrupt the video
+  if (widgetsById[env.widget_id]?.type === "stream") return;
   for (const c of Object.values(cellByStack)) {
     if (currentWidgetId(c.stack) === env.widget_id) renderCell(c.stack);
   }
@@ -238,6 +243,8 @@ function connectSSE() {
       const env = JSON.parse(e.data);
       if (env.type === "settings_update") {
         document.documentElement.style.setProperty("--widget-font-scale", env.data.widget_font_scale || "1");
+      } else if (env.type === "widget_update") {
+        refreshStructure();
       } else {
         onEnvelope(env);
       }
@@ -247,6 +254,7 @@ function connectSSE() {
 
 // ── navigation ───────────────────────────────────────────────────────────────
 let lastFull = null;
+let lastStructureKey = null;
 
 function goToPage(idx) {
   if (!lastFull || pages.length <= 1) return;
@@ -287,6 +295,14 @@ function setupNavigation() {
 async function refreshStructure() {
   const full = await api.boardFull();
   lastFull = full;
+  // Skip full DOM rebuild if nothing structural changed (avoids interrupting stream widgets)
+  const key = JSON.stringify([
+    full.board.pages ?? full.board.layout,
+    full.stacks.map(s => [s.id, s.widget_ids]),
+    full.widgets.map(w => [w.id, w.type, w.title, w.config]),
+  ]);
+  if (key === lastStructureKey) return;
+  lastStructureKey = key;
   buildBoard(full);
 }
 

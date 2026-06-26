@@ -99,6 +99,13 @@ class Poller:
         self._publish(envelope)
 
 
+    def force_poll_datasource(self, ds_id: int) -> None:
+        """Reset poll timers for all widgets on this data source so next tick re-fetches."""
+        for w in db.list_widgets():
+            if w.get("data_source_id") == ds_id:
+                self._last_run.pop(w["id"], None)
+
+
 poller = Poller()
 
 

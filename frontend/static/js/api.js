@@ -38,6 +38,7 @@ export const api = {
   createDataSource: (d) => req("POST", "/api/datasources", d),
   updateDataSource: (id, d) => req("PATCH", `/api/datasources/${id}`, d),
   deleteDataSource: (id) => req("DELETE", `/api/datasources/${id}`),
+  getDataSourceCredentials: (id) => req("GET", `/api/datasources/${id}/credentials`),
 
   listPingTargets: () => req("GET", "/api/ping-targets"),
   createPingTarget: (t) => req("POST", "/api/ping-targets", t),

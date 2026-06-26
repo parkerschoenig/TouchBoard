@@ -12,9 +12,7 @@ export const STYLES = [
   { key: "classic", label: "Classic" },
   { key: "glass",   label: "Glass"   },
   { key: "sharp",   label: "Sharp"   },
-  { key: "neon",    label: "Neon"    },
   { key: "soft",    label: "Soft"    },
-  { key: "retro",   label: "Retro"   },
 ];
 
 export const THEME_PRESETS = [
