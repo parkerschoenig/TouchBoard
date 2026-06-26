@@ -317,11 +317,65 @@
     .footer-copy  { font-size: 12px; color: rgba(145,139,184,.4); }
 
     /* ── Responsive ─────────────────────────────────────────────────────────── */
-    @media (max-width: 700px) {
+    @media (max-width: 768px) {
+      .section    { padding: 64px 0; }
+      .section-sm { padding: 40px 0; }
+      p.section-sub { margin-bottom: 36px; }
+
+      /* Nav: hide text links, keep buttons compact */
+      .nav-link { display: none; }
+      .nav-links { gap: 6px; }
+      .nav-links .btn { padding: 7px 14px; font-size: 13px; }
+
+      /* Hero */
+      .hero { padding: 60px 0 0; }
+      .hero-text { padding-bottom: 40px; }
+      .hero-sub { margin-bottom: 28px; }
+
+      /* Stats: 2x2 wrap */
+      .stats-inner { display: grid; grid-template-columns: 1fr 1fr; }
+      .stat-item { border-right: none; border-bottom: 1px solid var(--border); padding: 20px 16px; }
+      .stat-item:nth-child(1),
+      .stat-item:nth-child(3) { border-right: 1px solid var(--border); }
+      .stat-item:nth-child(3),
+      .stat-item:nth-child(4) { border-bottom: none; }
+
+      /* Features grid: single column */
+      .features-grid { grid-template-columns: 1fr; }
+
+      /* In-action: stack */
       .in-action-grid { grid-template-columns: 1fr; gap: 40px; }
-      .stat-item { padding: 20px 24px; }
-      .install-card { padding: 28px 20px; }
+
+      /* Widget chips: 2 per row */
+      .widgets-grid { grid-template-columns: 1fr 1fr; }
+
+      /* Install card */
+      .install-card { padding: 28px 18px; }
+    }
+
+    @media (max-width: 480px) {
+      .container { padding: 0 16px; }
+      .section { padding: 48px 0; }
+
+      /* Nav: just logo + demo button */
       .nav-links .btn-ghost { display: none; }
+      .nav-inner { gap: 12px; }
+
+      /* Hero title smaller on tiny screens */
+      .hero h1 { font-size: clamp(32px, 9vw, 48px); }
+
+      /* Stats: single column on very small */
+      .stats-inner { grid-template-columns: 1fr; }
+      .stat-item { border-right: none !important; border-bottom: 1px solid var(--border); }
+      .stat-item:last-child { border-bottom: none; }
+
+      /* Widget chips: keep 2-col but tighter */
+      .widget-chip { padding: 12px 14px; gap: 10px; }
+      .widget-chip-icon { font-size: 18px; }
+
+      /* Install card */
+      .install-card { padding: 24px 14px; border-radius: 14px; }
+      .code-block { font-size: 12px; padding: 10px 12px; }
     }
   </style>
 </head>
