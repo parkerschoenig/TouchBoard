@@ -2,7 +2,7 @@
 
 A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastructure. Design a multi-page layout of widgets, integrations, and stacks in any browser - then point any display at the server URL.
 
-![demo](https://img.shields.io/badge/live_demo-touchboard.onrender.com-3b82f6?style=flat-square)
+[![demo](https://img.shields.io/badge/live_demo-touchboard--demo.onrender.com-3b82f6?style=flat-square)](https://touchboard-demo.onrender.com)
 
 ## Features
 
@@ -26,11 +26,15 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 
 ## Integrations
 
-| Type        | Notes |
-|-------------|-------|
-| **Proxmox** | Per-node CPU, memory, uptime, and VM/CT resource summary |
-| **TrueNAS** | Pool storage, system memory, and CPU usage |
-| **NetBox**  | Rack elevation view, device count, and IP address summary |
+| Type                | Notes |
+|---------------------|-------|
+| **Proxmox**         | Per-node CPU, memory, uptime, and VM/CT resource summary |
+| **TrueNAS**         | Pool storage, system memory, and CPU usage |
+| **NetBox**          | Rack elevation view, device count, and IP address summary |
+| **OPNsense**        | Firewall traffic, interface stats, and system health |
+| **AdGuard Home**    | DNS query stats, block rate, and top blocked domains |
+| **Google Calendar** | Upcoming events from Google Calendar or any ICS feed |
+| **Stream**          | Live camera feed via HLS or RTSP |
 
 ---
 
@@ -44,8 +48,8 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 ### Quick start
 
 ```bash
-git clone <repo-url>
-cd touchboard
+git clone https://github.com/parkerschoenig/TouchBoard.git
+cd TouchBoard
 bash scripts/run.sh
 ```
 
@@ -148,28 +152,39 @@ Integration API keys are encrypted at rest with the server's `TOUCHBOARD_SECRET_
 
 ## Updating TouchBoard
 
-Pull the latest code and reinstall dependencies:
+Pull the latest code, then re-run the install script to pick up any new dependencies and restart the service:
 
 ```bash
-cd /opt/touchboard
+cd <your-install-dir>
 git pull
-.venv/bin/pip install -r requirements.txt
+sudo bash scripts/install-service.sh
 ```
 
-If you run it as a service, restart it:
+If you run it with `run.sh` instead of as a service, stop it (Ctrl-C) and re-run:
 
 ```bash
-sudo systemctl restart TouchBoard
+git pull
+bash scripts/run.sh
 ```
-
-If you launch it with the script instead, stop it (Ctrl-C) and re-run `bash scripts/run.sh`.
 
 > Your data lives in `data/touchboard.db` and is left untouched by updates. For peace of mind, export a backup first (see [Backup & migration](#backup--migration)).
 
 ---
 
+## Display navigation
+
+| Input | Action |
+|-------|--------|
+| Click / tap card | Cycle to next widget in stack |
+| Scroll on card | Cycle through stack widgets |
+| Scroll on page indicator | Change page |
+| ← → arrow keys | Change page |
+| Touch swipe left/right | Change page |
+
+---
+
 ## Demo
 
-A live demo with simulated data is available at **touchboard.onrender.com** (may take ~30 s to wake from cold start).
+A live demo with simulated data is available at **[touchboard-demo.onrender.com](https://touchboard-demo.onrender.com)** (may take ~30 s to wake from cold start).
 
 Demo credentials: `admin` / `touchboard`
