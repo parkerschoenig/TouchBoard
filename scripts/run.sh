@@ -5,8 +5,9 @@ set -euo pipefail
 
 PORT=${1:-8011}
 
-if [ ! -d .venv ]; then
+if [ ! -f .venv/bin/pip ]; then
   echo "==> Creating virtualenv"
+  rm -rf .venv
   python3 -m venv .venv
 fi
 
