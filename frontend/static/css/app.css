@@ -1765,7 +1765,10 @@ body.display { overflow: hidden; }
 .pt-section-head .settings-section-head { margin-bottom: 0; }
 
 /* ── Login page ──────────────────────────────────────────────────────────────*/
-body.login-page {
+/* Both selectors keep this background winning over any html[data-theme] body rule
+   (e.g. the bridge theme's body gradient) so the grid doesn't get overpainted. */
+body.login-page,
+html[data-theme] body.login-page {
   --login-board-bg: #060912;
   background-color: var(--login-board-bg);
   background-image:

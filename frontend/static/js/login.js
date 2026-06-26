@@ -1,5 +1,10 @@
 import { api } from "./api.js";
 import { applyTheme } from "./theme.js";
+import { initThemeSwitcher } from "./theme-switcher.js";
+
+// Apply the app-wide theme (bridge) so login matches the editor/display color scheme.
+// The login background outranks the theme's body background via CSS specificity, so no flash.
+initThemeSwitcher();
 
 fetch("/api/settings").then(r => r.json()).then(s => {
   applyTheme({ palette: s.theme_palette, style: s.theme_style, font: s.theme_font });
