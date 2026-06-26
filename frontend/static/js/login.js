@@ -1,8 +1,5 @@
 import { api } from "./api.js";
 import { applyTheme, hexToRgba } from "./theme.js";
-import { initThemeSwitcher } from "./theme-switcher.js";
-
-initThemeSwitcher();
 
 fetch("/api/settings").then(r => r.json()).then(s => {
   applyTheme({ palette: s.theme_palette, style: s.theme_style, font: s.theme_font });

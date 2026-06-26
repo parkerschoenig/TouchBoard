@@ -1769,9 +1769,12 @@ body.login-page {
   --login-board-bg: #060912;
   background-color: var(--login-board-bg);
   background-image:
-    radial-gradient(ellipse 60% 50% at 50% 50%, rgba(129,140,248,0.07) 0%, transparent 70%),
-    radial-gradient(circle, rgba(255,255,255,.10) 1.5px, transparent 1.5px);
-  background-size: auto, 32px 32px;
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='512' height='512' filter='url(%23n)' opacity='.055'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 70% 50% at 50% 30%, rgba(var(--accent-rgb), 0.10) 0%, transparent 65%),
+    linear-gradient(rgba(var(--accent-rgb), 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--accent-rgb), 0.07) 1px, transparent 1px);
+  background-size: 256px 256px, 100% 100%, 44px 44px, 44px 44px;
+  background-repeat: repeat, no-repeat, repeat, repeat;
   min-height: 100vh;
   display: flex; align-items: center; justify-content: center;
 }
