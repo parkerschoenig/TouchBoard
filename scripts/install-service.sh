@@ -43,9 +43,10 @@ Type=simple
 User=root
 WorkingDirectory=$DIR
 Environment=TOUCHBOARD_SECRET_KEY=$SECRET_KEY
-ExecStart=$DIR/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+ExecStart=$DIR/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port $PORT --timeout-graceful-shutdown 3
 Restart=always
 RestartSec=3
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
