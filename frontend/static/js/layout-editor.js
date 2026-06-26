@@ -163,6 +163,14 @@ function typeColor(type) {
   return WIDGET_CATEGORIES.find(c => c.types.includes(type))?.color || "#8b96a5";
 }
 
+// Toggle contextual tips and keep the Settings-menu state pill in sync.
+function setTipsEnabled(on, persist = true) {
+  document.body.classList.toggle("tips-on", on);
+  const st = byId("tips-menu-state");
+  if (st) { st.textContent = on ? "On" : "Off"; st.classList.toggle("on", on); }
+  if (persist) api.updateSettings({ tips_enabled: String(on) }).catch(() => {});
+}
+
 function buildPingMini(widget) {
   const data    = liveData[widget.id];
   const targets = widget.config?.targets || [];
@@ -272,6 +280,20 @@ function renderWidgets() {
   }
 }
 
+// Small badge marking whether a widget can be stacked onto another card.
+function _stackBadge(type) {
+  const stackable = !MULTIPAGE_TYPES.has(type);
+  const span = document.createElement("span");
+  span.className = "sb-stack-badge" + (stackable ? "" : " nostack");
+  const label = stackable ? "Stackable" : "Can't be stacked (multi-page widget)";
+  span.dataset.tip = label;
+  span.title = label;
+  span.innerHTML = stackable
+    ? '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 2.2 14 5 8 7.8 2 5 8 2.2Z"/><path d="M2.4 8 8 10.6 13.6 8"/><path d="M2.4 11 8 13.6 13.6 11"/></svg>'
+    : '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 2.2 14 5 8 7.8 2 5 8 2.2Z"/><line x1="2.8" y1="13.2" x2="13.2" y2="2.8"/></svg>';
+  return span;
+}
+
 function buildWidgetItem(w) {
   const item = document.createElement("div");
   item.className = "sb-widget-item";
@@ -312,7 +334,7 @@ function buildWidgetItem(w) {
   delBtn.title = "Delete widget";
   delBtn.textContent = "✕";
 
-  head.append(badge, name, editBtn, delBtn);
+  head.append(_stackBadge(w.type), badge, name, editBtn, delBtn);
   item.appendChild(head);
 
   editBtn.addEventListener("click", (e) => {
@@ -3260,11 +3282,7 @@ async function openSettingsPanel(section) {
       tipsSec.className = "ds-section";
       tipsSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Contextual Tips" }));
       const { row: tipsRow } = makeToggleRow("Show hover tips on UI elements", document.body.classList.contains("tips-on"), (checked) => {
-        document.body.classList.toggle("tips-on", checked);
-        api.updateSettings({ tips_enabled: String(checked) }).catch(() => {});
-        // Update topbar toggle button if present
-        const tb = byId("tips-toggle-btn");
-        if (tb) tb.classList.toggle("active", checked);
+        setTipsEnabled(checked);
       });
       tipsSec.appendChild(tipsRow);
       controlsPane.appendChild(tipsSec);
@@ -3305,6 +3323,111 @@ async function openSettingsPanel(section) {
   else if (section === "Users") renderUsersTab();
   else if (section === "Integrations") renderIntegrationsTab();
   else if (section === "Designer") renderDesignerTab();
+  else if (section === "Backup") renderBackupTab();
+
+  // ── Backup / Restore tab ──────────────────────────────────────────────────
+  function renderBackupTab() {
+    contentEl.innerHTML = "";
+
+    const intro = Object.assign(document.createElement("p"), {
+      className: "settings-ds-hint",
+      textContent: "Migrate your board, stacks, widgets, ping targets, integrations, and settings to another server. The file is encrypted with a passphrase you choose - your integration API keys are never stored in plaintext.",
+    });
+    contentEl.appendChild(intro);
+
+    // ── Export ────────────────────────────────────────────────────────────
+    const exportSec = document.createElement("div");
+    exportSec.className = "settings-form-wrap";
+    exportSec.appendChild(Object.assign(document.createElement("div"),
+      { className: "settings-edit-type-lbl", textContent: "Export backup" }));
+
+    const expPass = Object.assign(document.createElement("input"), {
+      className: "sb-form-input", type: "password", placeholder: "Choose a passphrase to encrypt the backup",
+    });
+    exportSec.appendChild(makeSbRow("Passphrase", expPass));
+
+    const expErr = Object.assign(document.createElement("div"), { className: "settings-form-error hidden" });
+    exportSec.appendChild(expErr);
+
+    const expBtn = Object.assign(document.createElement("button"),
+      { type: "button", className: "small primary", textContent: "Download backup" });
+    expBtn.addEventListener("click", async () => {
+      expErr.classList.add("hidden");
+      const pass = expPass.value;
+      if (pass.length < 6) { expErr.textContent = "Use a passphrase of at least 6 characters."; expErr.classList.remove("hidden"); return; }
+      expBtn.disabled = true; expBtn.textContent = "Preparing…";
+      try {
+        const envelope = await api.exportBackup(pass);
+        const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = Object.assign(document.createElement("a"), {
+          href: url, download: `touchboard-backup-${new Date().toISOString().slice(0,10)}.tbk`,
+        });
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        expBtn.textContent = "Downloaded ✓";
+        setTimeout(() => { expBtn.disabled = false; expBtn.textContent = "Download backup"; }, 2000);
+      } catch (e) {
+        expErr.textContent = e.message || "Export failed."; expErr.classList.remove("hidden");
+        expBtn.disabled = false; expBtn.textContent = "Download backup";
+      }
+    });
+    const expFooter = Object.assign(document.createElement("div"), { className: "settings-form-footer" });
+    expFooter.appendChild(expBtn);
+    exportSec.appendChild(expFooter);
+    contentEl.appendChild(exportSec);
+
+    // ── Import ────────────────────────────────────────────────────────────
+    const importSec = document.createElement("div");
+    importSec.className = "settings-form-wrap";
+    importSec.style.marginTop = "14px";
+    importSec.appendChild(Object.assign(document.createElement("div"),
+      { className: "settings-edit-type-lbl", textContent: "Restore backup" }));
+    importSec.appendChild(Object.assign(document.createElement("div"), {
+      className: "settings-ds-hint",
+      textContent: "Restoring replaces ALL current board config with the contents of the backup file.",
+    }));
+
+    const fileInput = Object.assign(document.createElement("input"), {
+      className: "sb-form-input", type: "file", accept: ".tbk,.json,application/json",
+    });
+    importSec.appendChild(makeSbRow("Backup file", fileInput));
+
+    const impPass = Object.assign(document.createElement("input"), {
+      className: "sb-form-input", type: "password", placeholder: "Passphrase used when the backup was created",
+    });
+    importSec.appendChild(makeSbRow("Passphrase", impPass));
+
+    const impErr = Object.assign(document.createElement("div"), { className: "settings-form-error hidden" });
+    importSec.appendChild(impErr);
+
+    const impBtn = Object.assign(document.createElement("button"),
+      { type: "button", className: "small primary", textContent: "Restore from backup" });
+    impBtn.addEventListener("click", async () => {
+      impErr.classList.add("hidden");
+      const file = fileInput.files?.[0];
+      if (!file) { impErr.textContent = "Choose a backup file first."; impErr.classList.remove("hidden"); return; }
+      if (!impPass.value) { impErr.textContent = "Enter the backup passphrase."; impErr.classList.remove("hidden"); return; }
+      if (!confirm("This will REPLACE all current board config with the backup. Continue?")) return;
+      impBtn.disabled = true; impBtn.textContent = "Restoring…";
+      try {
+        const envelope = JSON.parse(await file.text());
+        await api.importBackup(envelope, impPass.value);
+        impBtn.textContent = "Restored ✓ — reloading…";
+        setTimeout(() => window.location.reload(), 800);
+      } catch (e) {
+        impErr.textContent = e.message?.includes("400")
+          ? "Incorrect passphrase or invalid backup file."
+          : (e.message || "Restore failed.");
+        impErr.classList.remove("hidden");
+        impBtn.disabled = false; impBtn.textContent = "Restore from backup";
+      }
+    });
+    const impFooter = Object.assign(document.createElement("div"), { className: "settings-form-footer" });
+    impFooter.appendChild(impBtn);
+    importSec.appendChild(impFooter);
+    contentEl.appendChild(importSec);
+  }
 }
 
 // ── boot ──────────────────────────────────────────────────────────────────────
@@ -3726,16 +3849,13 @@ async function init() {
   // Apply contextual tips state
   initTooltips();
   const tipsActive = settings.tips_enabled !== "false";
-  if (tipsActive) document.body.classList.add("tips-on");
+  setTipsEnabled(tipsActive, false);
 
-  // Wire up topbar tips toggle button
-  const tipToggleBtn = byId("tips-toggle-btn");
-  if (tipToggleBtn) {
-    if (tipsActive) tipToggleBtn.classList.add("active");
-    tipToggleBtn.addEventListener("click", () => {
-      const nowOn = document.body.classList.toggle("tips-on");
-      tipToggleBtn.classList.toggle("active", nowOn);
-      api.updateSettings({ tips_enabled: String(nowOn) }).catch(() => {});
+  // Wire up the Contextual Tips item in the Settings dropdown
+  const tipsMenuItem = byId("tips-menu-item");
+  if (tipsMenuItem) {
+    tipsMenuItem.addEventListener("click", () => {
+      setTipsEnabled(!document.body.classList.contains("tips-on"));
     });
   }
 
@@ -3952,8 +4072,31 @@ async function init() {
   connectSSE();
 
   // ── topbar settings nav ────────────────────────────────────────────────────
-  for (const btn of document.querySelectorAll(".topbar-settings-btn")) {
+  // Standalone buttons (Designer) + dropdown items both carry data-section.
+  for (const btn of document.querySelectorAll(".topbar-settings-btn[data-section]")) {
     btn.addEventListener("click", () => openSettingsPanel(btn.dataset.section));
+  }
+
+  // Settings dropdown open/close + menu items
+  const settingsMenuBtn = byId("settings-menu-btn");
+  const settingsMenu = byId("settings-menu");
+  if (settingsMenuBtn && settingsMenu) {
+    settingsMenuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      settingsMenu.classList.toggle("hidden");
+    });
+    document.addEventListener("click", (e) => {
+      if (!settingsMenu.classList.contains("hidden") &&
+          !settingsMenu.contains(e.target) && !settingsMenuBtn.contains(e.target)) {
+        settingsMenu.classList.add("hidden");
+      }
+    });
+  }
+  for (const item of document.querySelectorAll(".topbar-menu-item[data-section]")) {
+    item.addEventListener("click", () => {
+      openSettingsPanel(item.dataset.section);
+      settingsMenu?.classList.add("hidden");
+    });
   }
 
   renderWidgets();

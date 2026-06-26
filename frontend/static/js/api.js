@@ -40,6 +40,9 @@ export const api = {
   deleteDataSource: (id) => req("DELETE", `/api/datasources/${id}`),
   getDataSourceCredentials: (id) => req("GET", `/api/datasources/${id}/credentials`),
 
+  exportBackup: (passphrase) => req("POST", "/api/backup/export", { passphrase }),
+  importBackup: (backup, passphrase) => req("POST", "/api/backup/import", { backup, passphrase }),
+
   listPingTargets: () => req("GET", "/api/ping-targets"),
   createPingTarget: (t) => req("POST", "/api/ping-targets", t),
   updatePingTarget: (id, t) => req("PUT", `/api/ping-targets/${id}`, t),

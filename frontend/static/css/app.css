@@ -131,6 +131,34 @@ input[type=radio] { width: auto; padding: 0; background: none; border: none; }
 .topbar-settings-btn:hover { color: var(--text); background: var(--panel-2); border-color: var(--border); }
 .topbar-settings-btn.active { color: var(--accent); background: rgba(96,165,250,.08); border-color: var(--accent); }
 
+/* ── settings dropdown ────────────────────────────────────────────────────── */
+.topbar-dropdown { position: relative; display: inline-block; }
+.topbar-dropdown-toggle .dd-caret { font-size: 10px; opacity: .8; margin-left: 1px; }
+.topbar-dropdown-menu {
+  position: absolute; top: calc(100% + 6px); right: 0;
+  min-width: 210px; padding: 6px;
+  background: var(--panel, #131720); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.45);
+  display: flex; flex-direction: column; gap: 2px; z-index: 30;
+}
+.topbar-dropdown-menu.hidden { display: none; }
+.topbar-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: transparent; border: none; color: var(--text, #e6edf3);
+  font-size: 13px; font-weight: 500; text-align: left;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.topbar-menu-item:hover { background: var(--panel-2); }
+.menu-item-state {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  color: var(--muted); background: rgba(255,255,255,.06);
+}
+.menu-item-state.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 
 /* ── modal (shared) ────────────────────────────────────────────────────────── */
 .modal-backdrop {
@@ -533,6 +561,11 @@ select.sb-form-input { padding: 5px 10px; }
   font-size: 11px; text-transform: uppercase; border: 1px solid; border-radius: 4px;
   padding: 2px 6px; flex-shrink: 0; letter-spacing: .3px;
 }
+.sb-stack-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; color: #34d399; cursor: default;
+}
+.sb-stack-badge.nostack { color: #f59e0b; }
 .palette-widget-label {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c9d1d9;
 }

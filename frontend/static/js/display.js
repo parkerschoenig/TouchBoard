@@ -245,6 +245,8 @@ function connectSSE() {
         document.documentElement.style.setProperty("--widget-font-scale", env.data.widget_font_scale || "1");
       } else if (env.type === "widget_update") {
         refreshStructure();
+      } else if (env.type === "config_restored") {
+        window.location.reload();
       } else {
         onEnvelope(env);
       }

@@ -2,9 +2,11 @@
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
-from .. import db, secrets, integrations
+from .. import db, secrets, integrations, backup
 from ..auth import generate_token, hash_password, verify_password
 from ..models import (
+    BackupExportIn,
+    BackupImportIn,
     BoardUpdate,
     ChangePasswordIn,
     DataSourceIn,
@@ -270,6 +272,27 @@ def get_data_source_credentials(ds_id: int, user: dict = Depends(current_user)):
     if "ical_url" in creds and "ical_urls" not in creds:
         creds["ical_urls"] = creds["ical_url"]
     return creds
+
+
+# ── backup / restore ──────────────────────────────────────────────────────────
+
+@router.post("/backup/export")
+def backup_export(body: BackupExportIn, user: dict = Depends(current_user)):
+    try:
+        return backup.export_backup(body.passphrase)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/backup/import")
+def backup_import(body: BackupImportIn, user: dict = Depends(current_user)):
+    try:
+        backup.restore_backup(body.backup, body.passphrase)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    poller.reset()
+    poller._publish({"type": "config_restored"})
+    return {"ok": True}
 
 
 # ── ping targets ──────────────────────────────────────────────────────────────

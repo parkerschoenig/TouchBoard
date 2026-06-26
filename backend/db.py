@@ -614,6 +614,76 @@ def set_settings(pairs: dict) -> None:
         conn.close()
 
 
+# ── backup / restore ──────────────────────────────────────────────────────────
+
+def dump_config() -> dict:
+    """Raw snapshot of all config tables (IDs preserved, secrets kept as bytes).
+
+    Auth tables (user/session) are intentionally excluded — backups are for
+    migrating board config, not credentials to log in.
+    """
+    conn = connect()
+    try:
+        board = conn.execute("SELECT columns, layout FROM board WHERE id = 1").fetchone()
+        return {
+            "board": dict(board) if board else None,
+            "data_sources": [dict(r) for r in conn.execute(
+                "SELECT id, type, name, base_url, secret, created_at FROM data_source ORDER BY id")],
+            "widgets": [dict(r) for r in conn.execute(
+                "SELECT id, type, title, config, data_source_id, refresh_interval_sec, created_at FROM widget ORDER BY id")],
+            "stacks": [dict(r) for r in conn.execute(
+                "SELECT id, name, widget_ids, cycle_mode, created_at FROM stack ORDER BY id")],
+            "ping_targets": [dict(r) for r in conn.execute(
+                "SELECT id, label, address, grp, created_at FROM ping_target ORDER BY id")],
+            "settings": [dict(r) for r in conn.execute("SELECT key, value FROM setting")],
+        }
+    finally:
+        conn.close()
+
+
+def restore_config(payload: dict) -> None:
+    """Replace board config from a snapshot, preserving original IDs so all
+    cross-references (widget→data_source, stack→widget_ids, board→stack_id) stay
+    intact. data_source `secret` blobs must already be encrypted for this server.
+    """
+    conn = connect()
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for t in ("widget", "stack", "data_source", "ping_target"):
+            conn.execute(f"DELETE FROM {t}")
+
+        b = payload.get("board")
+        if b:
+            conn.execute("UPDATE board SET columns=?, layout=? WHERE id=1", (b["columns"], b["layout"]))
+
+        for r in payload.get("data_sources", []):
+            conn.execute(
+                "INSERT INTO data_source (id, type, name, base_url, secret, created_at) VALUES (?,?,?,?,?,?)",
+                (r["id"], r["type"], r["name"], r["base_url"], r.get("secret"), r["created_at"]))
+        for r in payload.get("widgets", []):
+            conn.execute(
+                "INSERT INTO widget (id, type, title, config, data_source_id, refresh_interval_sec, created_at)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (r["id"], r["type"], r["title"], r["config"], r.get("data_source_id"),
+                 r["refresh_interval_sec"], r["created_at"]))
+        for r in payload.get("stacks", []):
+            conn.execute(
+                "INSERT INTO stack (id, name, widget_ids, cycle_mode, created_at) VALUES (?,?,?,?,?)",
+                (r["id"], r["name"], r["widget_ids"], r["cycle_mode"], r["created_at"]))
+        for r in payload.get("ping_targets", []):
+            conn.execute(
+                "INSERT INTO ping_target (id, label, address, grp, created_at) VALUES (?,?,?,?,?)",
+                (r["id"], r["label"], r["address"], r["grp"], r["created_at"]))
+        # Upsert settings (don't delete first, so version-specific defaults survive)
+        for r in payload.get("settings", []):
+            conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)", (r["key"], r["value"]))
+
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.close()
+
+
 # ── sessions ──────────────────────────────────────────────────────────────────
 
 def create_session(user_id: int, token: str) -> None:

@@ -105,6 +105,11 @@ class Poller:
             if w.get("data_source_id") == ds_id:
                 self._last_run.pop(w["id"], None)
 
+    def reset(self) -> None:
+        """Drop all cached results and poll timers (e.g. after a config restore)."""
+        self.cache.clear()
+        self._last_run.clear()
+
 
 poller = Poller()
 

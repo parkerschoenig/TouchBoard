@@ -17,12 +17,18 @@
     </label>
     <span class="spacer"></span>
     <nav class="topbar-settings-nav">
-      <button class="topbar-settings-btn" data-section="Ping Targets" data-tip="Monitor hosts, services and URLs">Ping Targets</button>
-      <button class="topbar-settings-btn" data-section="Integrations" data-tip="Connect Proxmox, TrueNAS and NetBox">Manage Integrations</button>
       <button class="topbar-settings-btn" data-section="Designer" data-tip="Customize card styles and board appearance">Designer</button>
-      <button class="topbar-settings-btn" data-section="Users" data-tip="Manage user accounts and access">Users</button>
+      <div class="topbar-dropdown" id="settings-dropdown">
+        <button class="topbar-settings-btn topbar-dropdown-toggle" id="settings-menu-btn" data-tip="Settings">Settings <span class="dd-caret">▾</span></button>
+        <div class="topbar-dropdown-menu hidden" id="settings-menu" role="menu">
+          <button class="topbar-menu-item" data-section="Ping Targets">Manage Ping Targets</button>
+          <button class="topbar-menu-item" data-section="Integrations">Manage Integrations</button>
+          <button class="topbar-menu-item" data-section="Users">Users</button>
+          <button class="topbar-menu-item" id="tips-menu-item" type="button">Contextual Tips<span class="menu-item-state" id="tips-menu-state">Off</span></button>
+          <button class="topbar-menu-item" data-section="Backup">Backup</button>
+        </div>
+      </div>
     </nav>
-    <button id="tips-toggle-btn" class="topbar-icon-btn" title="Toggle contextual tips" data-tip="Contextual tips on/off">💡</button>
     <span class="topbar-user" id="topbar-user"></span>
     <button id="logout-btn" class="topbar-icon-btn topbar-signout-btn" title="Sign out">Sign out</button>
   </div>

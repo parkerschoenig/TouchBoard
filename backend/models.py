@@ -121,3 +121,12 @@ class SettingsPatch(BaseModel):
     onboarding_done:     Optional[str] = None
     tips_enabled:        Optional[str] = None
     widget_font_scale:   Optional[str] = None
+
+
+class BackupExportIn(BaseModel):
+    passphrase: str
+
+
+class BackupImportIn(BaseModel):
+    passphrase: str
+    backup: dict[str, Any]
