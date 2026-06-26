@@ -2,7 +2,7 @@
 
 A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastructure. Design a multi-page layout of widgets, integrations, and stacks in any browser - then point any display at the server URL.
 
-[![demo](https://img.shields.io/badge/live_demo-touchboard--demo.onrender.com-3b82f6?style=flat-square)](https://touchboard-demo.onrender.com)
+[![demo](https://img.shields.io/badge/live_demo-touchboard.onrender.com-3b82f6?style=flat-square)](https://touchboard.onrender.com)
 
 ## Features
 
@@ -185,6 +185,6 @@ bash scripts/run.sh
 
 ## Demo
 
-A live demo with simulated data is available at **[touchboard-demo.onrender.com](https://touchboard-demo.onrender.com)** (may take ~30 s to wake from cold start).
+A live demo with simulated data is available at **[touchboard.onrender.com](https://touchboard.onrender.com)** (may take ~30 s to wake from cold start).
 
 Demo credentials: `admin` / `touchboard`
