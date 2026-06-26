@@ -87,47 +87,23 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8011
 
 ## Run as a service
 
-To keep TouchBoard running across reboots, install it as a systemd service.
-
-Create `/etc/systemd/system/TouchBoard.service` (adjust `User`, `WorkingDirectory`, and the port to your setup):
-
-```ini
-[Unit]
-Description=TouchBoard
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=youruser
-WorkingDirectory=/opt/touchboard
-Environment=TOUCHBOARD_SECRET_KEY=replace-with-your-generated-key
-ExecStart=/opt/touchboard/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8011
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then reload systemd and enable the service:
+To keep TouchBoard running across reboots, use the included install script. It creates the virtualenv, installs dependencies, generates a secret key, writes the systemd unit file, and starts the service — all in one step.
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable TouchBoard    # start automatically on boot
-sudo systemctl start TouchBoard     # start now
+sudo bash scripts/install-service.sh        # default port 8011
+sudo bash scripts/install-service.sh 9000   # custom port
 ```
 
 Manage it with the usual commands:
 
 ```bash
-sudo systemctl status TouchBoard
-sudo systemctl restart TouchBoard
-sudo systemctl stop TouchBoard
-sudo journalctl -u TouchBoard -f    # follow logs
+systemctl status touchboard
+systemctl restart touchboard
+systemctl stop touchboard
+journalctl -u touchboard -f    # live logs
 ```
 
-> Set `TOUCHBOARD_SECRET_KEY` in the unit file (see [Configuration](#configuration)) so encrypted data-source credentials survive restarts.
+> The install script generates a fresh `TOUCHBOARD_SECRET_KEY` and writes it into the service unit file automatically. If you ever need to rotate the key, edit `/etc/systemd/system/touchboard.service` and run `systemctl daemon-reload && systemctl restart touchboard`.
 
 ---
 
@@ -141,7 +117,7 @@ sudo journalctl -u TouchBoard -f    # follow logs
 Generate a secret key:
 
 ```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 ---
