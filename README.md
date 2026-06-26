@@ -6,13 +6,13 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 
 ## Features
 
-- **Visual drag-and-drop layout editor** — place, resize, and stack widgets freely on a configurable grid
-- **Widget stacks** — group multiple widgets in one card; tap/click to cycle through them, or scroll the dot indicator to jump between pages
-- **Multi-page boards** — organize widgets across pages; swipe, arrow-key, or scroll the page indicator to navigate
-- **Live data via SSE** — all widget data is pushed to the display in real time over Server-Sent Events
-- **Integrations stay server-side** — API tokens never touch the browser; no CORS issues
-- **Display-anywhere** — the editor and display are separate URLs; run the display in a kiosk browser on any panel
-- **Theme & card styling** — dark/light mode, accent colors, card backgrounds
+- **Visual drag-and-drop layout editor** - place, resize, and stack widgets freely on a configurable grid
+- **Widget stacks** -  group multiple widgets in one card; tap/click to cycle through them, or scroll the dot indicator to jump between pages
+- **Multi-page boards** - organize widgets across pages; swipe, arrow-key, or scroll the page indicator to navigate
+- **Live data via SSE** - all widget data is pushed to the display in real time over Server-Sent Events
+- **Integrations stay server-side** - API tokens never touch the browser; no CORS issues
+- **Display-anywhere** - the editor and display are separate URLs; run the display in a kiosk browser on any panel
+- **Theme & card styling** - dark/light mode, accent colors, card backgrounds
 
 ---
 
@@ -61,7 +61,7 @@ On first run the script:
   Display: https://<your-ip>:8011/display
 ```
 
-Your browser will show a certificate warning the first time — click through to add a security exception. Subsequent visits will be seamless.
+Your browser will show a certificate warning the first time - click through to add a security exception. Subsequent visits will be seamless.
 
 An optional port argument is supported:
 
@@ -143,22 +143,8 @@ Generate a secret key:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
----
-
-## Display navigation
-
-| Input | Action |
-|-------|--------|
-| Click / tap card | Cycle to next widget in stack |
-| Scroll on card | Cycle through stack widgets |
-| Scroll on page indicator | Change page |
-| ← → arrow keys | Change page |
-| Touch swipe left/right | Change page |
-
----
-
 ## Demo
 
-A live demo with simulated data is available at **touchboard-demo.onrender.com** (may take ~30 s to wake from cold start).
+A live demo with simulated data is available at **touchboard.onrender.com** (may take ~30 s to wake from cold start).
 
 Demo credentials: `admin` / `touchboard`
