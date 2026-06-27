@@ -1,6 +1,6 @@
-# TouchBoard — Live Demo
+# TouchBoard - Live Demo
 
-This is the demo instance of TouchBoard. Data is simulated — no real services are connected.
+This is the demo instance of TouchBoard. Data is simulated - no real services are connected.
 
 **Demo credentials:** `admin` / `touchboard`
 
