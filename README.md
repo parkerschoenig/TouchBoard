@@ -38,67 +38,35 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 
 ---
 
-## Running
+## Installation
 
 ### Prerequisites
 
+- Linux with systemd (Ubuntu 20.04+, Debian 11+, or similar)
 - Python 3.10 or higher
-- `ping` / `iputils-ping` for ICMP monitoring (install via `apt install iputils-ping` or `dnf install iputils`)
+- `iputils-ping` for ICMP monitoring (`apt install iputils-ping`)
 
-### Quick start
+### Install
+
+Clone the repo and run the install script. It creates a virtualenv, installs dependencies, generates a secret key, and registers a systemd service — all in one step.
 
 ```bash
 git clone https://github.com/parkerschoenig/TouchBoard.git
 cd TouchBoard
-bash scripts/run.sh
+sudo bash scripts/install-service.sh        # default port 8011
+sudo bash scripts/install-service.sh 9000   # custom port
 ```
 
-On first run the script:
-1. Creates a Python virtualenv (`.venv/`)
-2. Installs Python dependencies
-3. Starts the server on port **8011**
+Once running:
 
 ```
   Editor:  http://<your-ip>:8011/
   Display: http://<your-ip>:8011/display
 ```
 
-Open either URL from any device on your network. An optional port argument is supported:
+Default credentials: `admin` / `admin@touchboard` — you'll be prompted to change them on first login.
 
-```bash
-bash scripts/run.sh 9000   # run on port 9000 instead
-```
-
-### Manual setup
-
-If you prefer to control each step individually:
-
-```bash
-# 1. Create and activate a virtualenv
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Start the server
-uvicorn backend.main:app --host 0.0.0.0 --port 8011
-```
-
-> TouchBoard serves plain HTTP. To expose it over HTTPS, put it behind a reverse proxy (Caddy, nginx, Traefik, etc.).
-
----
-
-## Run as a service
-
-To keep TouchBoard running across reboots, use the included install script. It creates the virtualenv, installs dependencies, generates a secret key, writes the systemd unit file, and starts the service — all in one step.
-
-```bash
-sudo bash scripts/install-service.sh        # default port 8011
-sudo bash scripts/install-service.sh 9000   # custom port
-```
-
-Manage it with the usual commands:
+### Manage the service
 
 ```bash
 systemctl status touchboard
@@ -107,7 +75,7 @@ systemctl stop touchboard
 journalctl -u touchboard -f    # live logs
 ```
 
-> The install script generates a fresh `TOUCHBOARD_SECRET_KEY` and writes it into the service unit file automatically. If you ever need to rotate the key, edit `/etc/systemd/system/touchboard.service` and run `systemctl daemon-reload && systemctl restart touchboard`.
+> TouchBoard serves plain HTTP. To expose it over HTTPS, put it behind a reverse proxy (Caddy, nginx, Traefik, etc.).
 
 ---
 
@@ -116,13 +84,23 @@ journalctl -u touchboard -f    # live logs
 | Env var | Default | Purpose |
 |---------|---------|---------|
 | `TOUCHBOARD_DB` | `./data/touchboard.db` | SQLite database path |
-| `TOUCHBOARD_SECRET_KEY` | auto-generated | Fernet key used to encrypt data-source credentials. Set this explicitly so credentials survive server restarts. |
+| `TOUCHBOARD_SECRET_KEY` | auto-generated | Fernet key used to encrypt data-source credentials. The install script generates and stores this automatically. |
 
-Generate a secret key:
+> If you ever need to rotate the key, edit `/etc/systemd/system/touchboard.service` and run `systemctl daemon-reload && systemctl restart touchboard`.
+
+---
+
+## Updating
+
+Pull the latest code and re-run the install script:
 
 ```bash
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+cd <your-install-dir>
+git pull
+sudo bash scripts/install-service.sh
 ```
+
+> Your data lives in `data/touchboard.db` and is untouched by updates. Export a backup first for safety (see [Backup & migration](#backup--migration)).
 
 ---
 
@@ -138,36 +116,15 @@ In the editor topbar, open **Backup**:
 Integration API keys are encrypted at rest with the server's `TOUCHBOARD_SECRET_KEY`. The backup re-encrypts them under the passphrase you choose, so:
 
 - the file never contains plaintext credentials, and
-- it restores cleanly onto a new server even if that server has a different `TOUCHBOARD_SECRET_KEY` - credentials are re-encrypted under the new key on import.
+- it restores cleanly onto a new server even if that server has a different `TOUCHBOARD_SECRET_KEY` — credentials are re-encrypted under the new key on import.
 
 > Restoring **replaces all current board config**. User accounts are not included in a backup.
 
 **Migrating to a new server:**
 
-1. Install TouchBoard on the new server (see [Running](#running)).
+1. Install TouchBoard on the new server.
 2. On the old server: **Backup → Export**, pick a passphrase, download the file.
 3. On the new server: **Backup → Restore**, upload the file, enter the same passphrase.
-
----
-
-## Updating TouchBoard
-
-Pull the latest code, then re-run the install script to pick up any new dependencies and restart the service:
-
-```bash
-cd <your-install-dir>
-git pull
-sudo bash scripts/install-service.sh
-```
-
-If you run it with `run.sh` instead of as a service, stop it (Ctrl-C) and re-run:
-
-```bash
-git pull
-bash scripts/run.sh
-```
-
-> Your data lives in `data/touchboard.db` and is left untouched by updates. For peace of mind, export a backup first (see [Backup & migration](#backup--migration)).
 
 ---
 
