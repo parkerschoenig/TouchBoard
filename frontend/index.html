@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TouchBoard — Configure</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <div class="topbar">
+    <h1>TouchBoard</h1>
+    <span class="spacer"></span>
+    <a href="/layout-editor">Layout Editor ↗</a>
+    <a href="/display" target="_blank" rel="noopener">Open Display ↗</a>
+  </div>
+
+  <div class="config-layout">
+
+    <!-- Widgets panel -->
+    <section class="config-panel">
+      <div class="panel-head">
+        <h2>Widgets</h2>
+        <button id="create-widget" class="primary small">+ Widget</button>
+      </div>
+      <div id="widget-list" class="item-list"></div>
+    </section>
+
+    <!-- Stacks panel -->
+    <section class="config-panel">
+      <div class="panel-head">
+        <h2>Stacks</h2>
+        <button id="create-stack" class="primary small">+ Stack</button>
+      </div>
+      <div id="stack-list" class="item-list"></div>
+    </section>
+
+  </div>
+
+  <!-- widget create/edit modal -->
+  <div class="modal-backdrop" id="widget-modal">
+    <div class="modal">
+      <h2 id="widget-modal-title">New Widget</h2>
+      <div class="body">
+        <div class="field">
+          <label>Type</label>
+          <select id="w-type">
+            <option value="ping">Ping / URL checker</option>
+            <option value="proxmox">Proxmox (phase 2)</option>
+            <option value="truenas">TrueNAS (phase 2)</option>
+            <option value="netbox">NetBox (phase 2)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Title</label>
+          <input id="w-title" placeholder="e.g. Core network" />
+        </div>
+        <div class="field">
+          <label>Refresh interval (seconds)</label>
+          <input type="number" id="w-interval" min="2" value="15" />
+        </div>
+        <div class="field" id="ping-fields">
+          <label>Targets (label + URL or IP[:port])</label>
+          <div id="targets"></div>
+          <button id="add-target" type="button" class="small">+ target</button>
+        </div>
+      </div>
+      <div class="footer">
+        <button id="w-cancel">Cancel</button>
+        <button class="primary" id="w-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/js/index.js"></script>
+</body>
+</html>
