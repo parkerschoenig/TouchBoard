@@ -980,12 +980,8 @@ function renderOpnsense(widget, data) {
   const upColor   = ocfg.ops_up_color   || "#22c55e";
   const downColor = ocfg.ops_down_color || "#3b82f6";
 
-  // ── Header: version badge + donuts ───────────────────────────────────────
+  // ── Header: donuts (version badge lives on the widget title line) ────────
   const hdr = el("div", "op-header");
-
-  if (data.version) {
-    hdr.appendChild(el("div", "op-version", data.version));
-  }
 
   for (const { pct, color, label, donutKey } of [
     { pct: data.cpu_pct, color: cpuColor, label: "CPU",    donutKey: "cpu" },
@@ -1258,6 +1254,11 @@ export function renderWidget(widget, envelope, opts = {}) {
 
   const head = el("div", "widget-head");
   head.appendChild(el("span", "widget-title", widget.title));
+
+  // OPNsense exposes its firmware version on the right of the title line.
+  if (widget.type === "opnsense" && data?.version) {
+    head.appendChild(el("span", "widget-version", data.version));
+  }
 
   card.appendChild(head);
   card.appendChild(body);
