@@ -1,4 +1,4 @@
-import { api, setDemoMode } from "./api.js";
+import { api } from "./api.js";
 import { renderWidget, openWidgetAppearancePopover } from "./widgets.js";
 import { STYLES, FONTS, THEME_PRESETS, applyTheme, applyCardStyle, hexToRgba } from "./theme.js";
 import { initThemeSwitcher } from "./theme-switcher.js";
@@ -1965,23 +1965,46 @@ function refreshWidgetArea(el, stack) {
   if (pagBar) pagBar.innerHTML = "";
 }
 
-function onEnvelope(env) {
-  liveData[env.widget_id] = env;
+// Re-render every placed card showing the given widget, using whatever data
+// is currently cached in liveData (no refetch).
+function rerenderCardsFor(widgetId) {
   if (!grid) return;
   // Stream widgets play continuously — re-rendering would interrupt the video
-  if (widgets.find(w => w.id === env.widget_id)?.type === "stream") return;
+  if (widgets.find(w => w.id === widgetId)?.type === "stream") return;
   for (const el of grid.getGridItems()) {
     const stackId = Number(el.dataset.stackId);
     const stack   = stacks.find((s) => s.id === stackId);
-    if (stack?.widget_ids.includes(env.widget_id)) {
+    if (stack?.widget_ids.includes(widgetId)) {
       refreshWidgetArea(el, stack);
     }
   }
 }
 
+function onEnvelope(env) {
+  liveData[env.widget_id] = env;
+  rerenderCardsFor(env.widget_id);
+}
+
 function connectSSE() {
   const es = new EventSource("/api/stream");
-  es.onmessage = (e) => { try { onEnvelope(JSON.parse(e.data)); } catch (_) {} };
+  es.onmessage = (e) => {
+    try {
+      const env = JSON.parse(e.data);
+      if (env.type === "widget_update") {
+        // Config/appearance changed (e.g. scale or colors). Re-render the
+        // affected cards from cached data so the widget keeps its current
+        // contents instead of flashing its "Loading…" state. The dataless
+        // control envelope must NOT overwrite the cached data envelope.
+        rerenderCardsFor(env.widget_id);
+      } else if (env.type === "config_restored") {
+        window.location.reload();
+      } else if (env.type === "settings_update") {
+        byId("preview-viewport")?.style.setProperty("--widget-font-scale", env.data?.widget_font_scale || "1");
+      } else {
+        onEnvelope(env);
+      }
+    } catch (_) {}
+  };
 }
 
 // ── page tabs ─────────────────────────────────────────────────────────────────
@@ -3853,14 +3876,6 @@ async function init() {
   const tipsActive = settings.tips_enabled !== "false";
   setTipsEnabled(tipsActive, false);
 
-  // Demo mode: short-circuit writes client-side and show the demo banner
-  const demoMode = settings.demo_mode === "true";
-  if (demoMode) {
-    setDemoMode(true);
-    const banner = byId("demo-banner");
-    if (banner) banner.style.display = "flex";
-  }
-
   // Wire up the Contextual Tips item in the Settings dropdown
   const tipsMenuItem = byId("tips-menu-item");
   if (tipsMenuItem) {
@@ -3869,8 +3884,8 @@ async function init() {
     });
   }
 
-  if (settings.onboarding_done !== "true" || (currentUser.is_default_password && !demoMode)) {
-    showOnboarding({ ...settings, is_default_password: demoMode ? false : currentUser.is_default_password });
+  if (settings.onboarding_done !== "true" || currentUser.is_default_password) {
+    showOnboarding({ ...settings, is_default_password: currentUser.is_default_password });
   }
 
   currentTheme.style = settings.theme_style || "classic";
