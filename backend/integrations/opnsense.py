@@ -90,7 +90,7 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
             (activity_raw, activity_err), (traffic_raw, traffic_err), (fw_raw, _fw_err) = await asyncio.gather(
                 _get(client, f"{base_url}/api/diagnostics/activity/getActivity", auth),
                 _get(client, f"{base_url}/api/diagnostics/traffic/interface", auth),
-                _get(client, f"{base_url}/api/core/firmware/running", auth),
+                _get(client, f"{base_url}/api/core/firmware/status", auth),
             )
         except Exception as exc:
             return {"error": f"Cannot reach OPNsense: {exc}"}
@@ -99,7 +99,10 @@ async def fetch(widget: dict, data_source: dict | None) -> dict:
     if errors:
         return {"error": " | ".join(errors)}
 
-    version = (fw_raw or {}).get("product_version", "")
+    # Version lives at the top level on older OPNsense, or under "product" on newer.
+    fw_raw  = fw_raw or {}
+    product = fw_raw.get("product") or {}
+    version = product.get("product_version") or fw_raw.get("product_version", "")
 
     # ── CPU + Memory from header strings ─────────────────────────────────────
     headers  = (activity_raw or {}).get("headers", [])
