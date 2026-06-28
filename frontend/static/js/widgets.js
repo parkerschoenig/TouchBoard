@@ -1244,6 +1244,13 @@ export function renderWidget(widget, envelope, opts = {}) {
   const card = el("div", "widget");
   if (widget.config?.widget_theme === "light") card.classList.add("widget--light");
 
+  // Per-widget scaling — multiplies into the element clamps via CSS variables.
+  // Applies on both the editor and live display since both call renderWidget.
+  const wScale = Number(widget.config?.widget_scale);
+  if (wScale && wScale !== 1) card.style.setProperty("--w-scale", String(wScale));
+  const dScale = Number(widget.config?.widget_donut_scale);
+  if (dScale && dScale !== 1) card.style.setProperty("--w-donut-scale", String(dScale));
+
   const body = el("div", "widget-body");
   const data = envelope?.data ?? null;
   if (data?.error) {
@@ -1288,6 +1295,39 @@ export function openWidgetAppearancePopover(anchor, widget, data, onConfig) {
     });
     togRow.append(togLbl, togInp);
     pop.appendChild(togRow);
+
+    // ── Scale ──────────────────────────────────────────────────────────────
+    // Builds a labelled 50–200% slider bound to a config key; live-previews by
+    // setting `cssVar` on the card's .widget element, persists on release.
+    const _scaleRow = (label, key, cssVar) => {
+      const cur = Number(widget.config?.[key]) || 1;
+      const row = el("div", "wc-scale-row");
+      const lbl = el("span", "wc-color-label", label);
+      const val = el("span", "wc-scale-val", Math.round(cur * 100) + "%");
+      val.title = "Double-click to reset";
+      const sld = document.createElement("input");
+      sld.type = "range"; sld.min = "0.5"; sld.max = "2"; sld.step = "0.05";
+      sld.value = String(cur); sld.className = "wc-scale-slider";
+      const apply = (v) => {
+        val.textContent = Math.round(parseFloat(v) * 100) + "%";
+        const widgetEl = anchor.closest(".layout-stack-card")?.querySelector(".widget");
+        if (widgetEl) widgetEl.style.setProperty(cssVar, String(v));
+      };
+      sld.addEventListener("input", () => apply(sld.value));
+      sld.addEventListener("change", () => _saveWidgetConfig(widget, { [key]: Number(sld.value) }));
+      val.addEventListener("dblclick", () => {
+        sld.value = "1"; apply("1"); _saveWidgetConfig(widget, { [key]: 1 });
+      });
+      row.append(lbl, sld, val);
+      pop.appendChild(row);
+    };
+
+    pop.appendChild(el("div", "wc-sub-head", "Scale"));
+    _scaleRow("Widget size", "widget_scale", "--w-scale");
+    if (["opnsense", "proxmox", "truenas", "netbox"].includes(widget?.type)) {
+      _scaleRow(widget.type === "netbox" ? "Number size" : "Donut size",
+                "widget_donut_scale", "--w-donut-scale");
+    }
 
     // ── Proxmox bar colors ────────────────────────────────────────────────
     if (widget?.type === "proxmox") {
