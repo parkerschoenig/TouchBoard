@@ -2457,11 +2457,15 @@ html[data-theme] body.login-page {
   display: flex; justify-content: space-around; align-items: center;
   flex-shrink: 0; padding: 4px 0; position: relative;
 }
-.op-version {
-  position: absolute; top: 0; right: 0;
-  font-size: clamp(8px, 2cqw, 11px); color: var(--muted);
+.widget-version {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  font-size: clamp(9px, 1.6vmin, 12px); color: var(--muted);
   background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
-  border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+  border-radius: 4px; padding: 1px 6px; white-space: nowrap; line-height: 1.4;
+}
+.widget--light .widget-version {
+  color: #475569 !important;
+  background: rgba(0,0,0,.04); border-color: rgba(0,0,0,.12);
 }
 .op-donut-wrap {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
