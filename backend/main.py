@@ -56,6 +56,11 @@ def display():
     return FileResponse(FRONTEND / "display.html")
 
 
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(FRONTEND / "static" / "img" / "favicon.ico")
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
