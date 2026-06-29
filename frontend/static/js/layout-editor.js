@@ -3884,9 +3884,7 @@ async function init() {
     });
   }
 
-  if (settings.onboarding_done !== "true" || currentUser.is_default_password) {
-    showOnboarding({ ...settings, is_default_password: currentUser.is_default_password });
-  }
+  // Onboarding welcome modal is disabled on the demo build.
 
   currentTheme.style = settings.theme_style || "classic";
   currentTheme.font  = settings.theme_font  || "inter";
