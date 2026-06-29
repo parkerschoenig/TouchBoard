@@ -1300,16 +1300,31 @@ export function openWidgetAppearancePopover(anchor, widget, data, onConfig) {
     // Builds a labelled 50–200% slider bound to a config key; live-previews by
     // setting `cssVar` on the card's .widget element, persists on release.
     const _scaleRow = (label, key, cssVar) => {
+      const MIN = 0.5, MAX = 2;
       const cur = Number(widget.config?.[key]) || 1;
       const row = el("div", "wc-scale-row");
       const lbl = el("span", "wc-color-label", label);
       const val = el("span", "wc-scale-val", Math.round(cur * 100) + "%");
       val.title = "Double-click to reset";
+
+      const shell = el("div", "wc-scale-slider-shell");
+      const trackBg = el("div", "wc-scale-track-bg");
+      const trackFill = el("div", "wc-scale-track-fill");
+      trackBg.appendChild(trackFill);
+
       const sld = document.createElement("input");
-      sld.type = "range"; sld.min = "0.5"; sld.max = "2"; sld.step = "0.05";
+      sld.type = "range"; sld.min = String(MIN); sld.max = String(MAX); sld.step = "0.05";
       sld.value = String(cur); sld.className = "wc-scale-slider";
+      shell.append(trackBg, sld);
+
+      const updateFill = (v) => {
+        trackFill.style.width = ((parseFloat(v) - MIN) / (MAX - MIN) * 100).toFixed(2) + "%";
+      };
+      updateFill(cur);
+
       const apply = (v) => {
         val.textContent = Math.round(parseFloat(v) * 100) + "%";
+        updateFill(v);
         const widgetEl = anchor.closest(".layout-stack-card")?.querySelector(".widget");
         if (widgetEl) widgetEl.style.setProperty(cssVar, String(v));
       };
@@ -1318,7 +1333,7 @@ export function openWidgetAppearancePopover(anchor, widget, data, onConfig) {
       val.addEventListener("dblclick", () => {
         sld.value = "1"; apply("1"); _saveWidgetConfig(widget, { [key]: 1 });
       });
-      row.append(lbl, sld, val);
+      row.append(lbl, shell, val);
       pop.appendChild(row);
     };
 
