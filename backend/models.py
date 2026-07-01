@@ -48,6 +48,20 @@ class BoardUpdate(BaseModel):
     pages: Optional[list[dict]] = None
 
 
+class ProfileIn(BaseModel):
+    name: str
+    clone_from: Optional[int] = None
+
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    columns: Optional[int] = None
+    layout: Optional[list[LayoutNode]] = None  # legacy, ignored if pages provided
+    pages: Optional[list[dict]] = None
+    disp_w: Optional[int] = None
+    disp_h: Optional[int] = None
+
+
 class DataSourceIn(BaseModel):
     type: SourceType
     name: str
@@ -98,8 +112,6 @@ class UserUpdate(BaseModel):
 class SettingsPatch(BaseModel):
     theme_style:         Optional[str] = None
     theme_font:          Optional[str] = None
-    disp_w:              Optional[str] = None
-    disp_h:              Optional[str] = None
     card_bg_color:       Optional[str] = None
     card_bg_opacity:     Optional[str] = None
     card_gradient:       Optional[str] = None

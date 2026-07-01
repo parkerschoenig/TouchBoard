@@ -14,6 +14,8 @@ from ..models import (
     LoginIn,
     PingTargetIn,
     PingTargetUpdate,
+    ProfileIn,
+    ProfileUpdate,
     SettingsPatch,
     StackIn,
     StackUpdate,
@@ -142,13 +144,13 @@ def del_user(user_id: int, user: dict = Depends(current_user)):
 # ── widgets ───────────────────────────────────────────────────────────────────
 
 @router.get("/widgets")
-def get_widgets(user: dict = Depends(current_user)):
-    return db.list_widgets()
+def get_widgets(profile_id: int | None = None, user: dict = Depends(current_user)):
+    return db.list_widgets(profile_id if profile_id is not None else db.get_active_profile_id())
 
 
 @router.post("/widgets", status_code=201)
-def post_widget(body: WidgetIn, user: dict = Depends(current_user)):
-    return db.create_widget(body.model_dump())
+def post_widget(body: WidgetIn, profile_id: int | None = None, user: dict = Depends(current_user)):
+    return db.create_widget(body.model_dump(), profile_id if profile_id is not None else db.get_active_profile_id())
 
 
 @router.get("/widgets/{widget_id}/data")
@@ -186,13 +188,13 @@ def remove_widget(widget_id: int, user: dict = Depends(current_user)):
 # ── stacks ────────────────────────────────────────────────────────────────────
 
 @router.get("/stacks")
-def get_stacks(user: dict = Depends(current_user)):
-    return db.list_stacks()
+def get_stacks(profile_id: int | None = None, user: dict = Depends(current_user)):
+    return db.list_stacks(profile_id if profile_id is not None else db.get_active_profile_id())
 
 
 @router.post("/stacks", status_code=201)
-def post_stack(body: StackIn, user: dict = Depends(current_user)):
-    return db.create_stack(body.model_dump())
+def post_stack(body: StackIn, profile_id: int | None = None, user: dict = Depends(current_user)):
+    return db.create_stack(body.model_dump(), profile_id if profile_id is not None else db.get_active_profile_id())
 
 
 @router.put("/stacks/{stack_id}")
@@ -209,30 +211,100 @@ def remove_stack(stack_id: int, user: dict = Depends(current_user)):
         raise HTTPException(404, "stack not found")
 
 
-# ── board ─────────────────────────────────────────────────────────────────────
+# ── board (profile-scoped; defaults to the active profile) ───────────────────
 
 @router.get("/board")
-def get_board():
+def get_board(profile_id: int | None = None):
     # Public — used by the display page
-    return db.get_board()
+    return db.get_profile(profile_id if profile_id is not None else db.get_active_profile_id())
 
 
 @router.put("/board")
-def put_board(body: BoardUpdate, user: dict = Depends(current_user)):
+def put_board(body: BoardUpdate, profile_id: int | None = None, user: dict = Depends(current_user)):
     payload = body.model_dump(exclude_unset=True)
     if "layout" in payload and payload["layout"] is not None:
         payload["layout"] = [n if isinstance(n, dict) else n.model_dump() for n in payload["layout"]]
-    return db.update_board(payload)
+    pid = profile_id if profile_id is not None else db.get_active_profile_id()
+    updated = db.update_profile_board(pid, payload)
+    if not updated:
+        raise HTTPException(404, "profile not found")
+    return updated
 
 
 @router.get("/board/full")
-def get_board_full():
+def get_board_full(profile_id: int | None = None):
     # Public — used by the display page
+    pid = profile_id if profile_id is not None else db.get_active_profile_id()
     return {
-        "board": db.get_board(),
-        "stacks": db.list_stacks(),
-        "widgets": db.list_widgets(),
+        "board": db.get_profile(pid),
+        "stacks": db.list_stacks(pid),
+        "widgets": db.list_widgets(pid),
     }
+
+
+# ── profiles ──────────────────────────────────────────────────────────────────
+
+@router.get("/profiles")
+def get_profiles(user: dict = Depends(current_user)):
+    return db.list_profiles()
+
+
+@router.get("/profiles/active")
+def get_active_profile():
+    # Public — used by the display page
+    return {"profile_id": db.get_active_profile_id()}
+
+
+@router.post("/profiles", status_code=201)
+def post_profile(body: ProfileIn, user: dict = Depends(current_user)):
+    try:
+        return db.create_profile(body.name, clone_from=body.clone_from)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/profiles/{profile_id}/duplicate", status_code=201)
+def duplicate_profile(profile_id: int, body: ProfileIn, user: dict = Depends(current_user)):
+    try:
+        return db.create_profile(body.name, clone_from=profile_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.patch("/profiles/{profile_id}")
+def patch_profile(profile_id: int, body: ProfileUpdate, user: dict = Depends(current_user)):
+    data = body.model_dump(exclude_unset=True)
+    name = data.pop("name", None)
+    if "layout" in data and data["layout"] is not None:
+        data["layout"] = [n if isinstance(n, dict) else n.model_dump() for n in data["layout"]]
+    updated = None
+    if name is not None:
+        updated = db.rename_profile(profile_id, name)
+        if not updated:
+            raise HTTPException(404, "profile not found")
+    if data:
+        updated = db.update_profile_board(profile_id, data)
+        if not updated:
+            raise HTTPException(404, "profile not found")
+    return updated or db.get_profile(profile_id)
+
+
+@router.delete("/profiles/{profile_id}", status_code=204)
+def remove_profile(profile_id: int, user: dict = Depends(current_user)):
+    err = db.delete_profile(profile_id)
+    if err == "not_found":
+        raise HTTPException(404, "profile not found")
+    if err:
+        raise HTTPException(400, err)
+
+
+@router.post("/profiles/{profile_id}/activate")
+def activate_profile(profile_id: int, user: dict = Depends(current_user)):
+    updated = db.set_active_profile(profile_id)
+    if not updated:
+        raise HTTPException(404, "profile not found")
+    poller._publish({"type": "active_profile_changed", "profile_id": profile_id})
+    return updated
 
 
 # ── data sources ──────────────────────────────────────────────────────────────

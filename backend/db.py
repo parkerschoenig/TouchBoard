@@ -28,6 +28,16 @@ CREATE TABLE IF NOT EXISTS data_source (
   secret     BLOB,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS profile (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  columns    INTEGER NOT NULL DEFAULT 6,
+  layout     TEXT NOT NULL DEFAULT '[]',
+  disp_w     INTEGER NOT NULL DEFAULT 1920,
+  disp_h     INTEGER NOT NULL DEFAULT 720,
+  is_active  INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS widget (
   id                   INTEGER PRIMARY KEY AUTOINCREMENT,
   type                 TEXT NOT NULL,
@@ -35,6 +45,7 @@ CREATE TABLE IF NOT EXISTS widget (
   config               TEXT NOT NULL DEFAULT '{}',
   data_source_id       INTEGER REFERENCES data_source(id) ON DELETE SET NULL,
   refresh_interval_sec INTEGER NOT NULL DEFAULT 30,
+  profile_id           INTEGER REFERENCES profile(id) ON DELETE CASCADE,
   created_at           TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stack (
@@ -42,12 +53,8 @@ CREATE TABLE IF NOT EXISTS stack (
   name       TEXT NOT NULL,
   widget_ids TEXT NOT NULL DEFAULT '[]',
   cycle_mode TEXT NOT NULL DEFAULT 'tap',
+  profile_id INTEGER REFERENCES profile(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS board (
-  id      INTEGER PRIMARY KEY CHECK (id = 1),
-  columns INTEGER NOT NULL DEFAULT 6,
-  layout  TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS ping_target (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +81,54 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _ensure_profile_columns(conn: sqlite3.Connection) -> None:
+    """Add profile_id to widget/stack if migrating from a pre-profiles DB
+    (fresh installs already get it from SCHEMA's CREATE TABLE)."""
+    for table in ("widget", "stack"):
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "profile_id" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN profile_id INTEGER REFERENCES profile(id) ON DELETE CASCADE")
+
+
+def _migrate_board_to_profile(conn: sqlite3.Connection) -> None:
+    """One-time migration: fold the old singleton `board` row (plus disp_w/disp_h
+    settings) into a single "Default" profile, and claim all existing widgets/
+    stacks into it. Runs at most once — subsequent calls find no `board` table
+    and skip immediately."""
+    if not _table_exists(conn, "board"):
+        return
+    try:
+        board_row = conn.execute("SELECT columns, layout FROM board WHERE id = 1").fetchone()
+        settings = dict(conn.execute(
+            "SELECT key, value FROM setting WHERE key IN ('disp_w', 'disp_h')"
+        ).fetchall())
+        disp_w = int(settings.get("disp_w", 1920))
+        disp_h = int(settings.get("disp_h", 720))
+        columns = board_row["columns"] if board_row else 6
+        layout = board_row["layout"] if board_row else "[]"
+
+        cur = conn.execute(
+            "INSERT INTO profile (name, columns, layout, disp_w, disp_h, is_active, created_at)"
+            " VALUES ('Default', ?, ?, ?, ?, 1, ?)",
+            (columns, layout, disp_w, disp_h, _now()),
+        )
+        default_id = cur.lastrowid
+        conn.execute("UPDATE widget SET profile_id = ? WHERE profile_id IS NULL", (default_id,))
+        conn.execute("UPDATE stack SET profile_id = ? WHERE profile_id IS NULL", (default_id,))
+        conn.execute("DROP TABLE board")
+        conn.execute("DELETE FROM setting WHERE key IN ('disp_w', 'disp_h')")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db() -> None:
     from .auth import hash_password, DEFAULT_PASSWORD
 
@@ -81,9 +136,15 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
-        conn.execute(
-            "INSERT OR IGNORE INTO board (id, columns, layout) VALUES (1, 6, '[]')"
-        )
+        _ensure_profile_columns(conn)
+        _migrate_board_to_profile(conn)
+        # Fresh install (no legacy board, no profile yet) — seed one empty profile
+        if conn.execute("SELECT 1 FROM profile LIMIT 1").fetchone() is None:
+            conn.execute(
+                "INSERT INTO profile (name, columns, layout, disp_w, disp_h, is_active, created_at)"
+                " VALUES ('Default', 6, '[]', 1920, 720, 1, ?)",
+                (_now(),),
+            )
         # Seed default admin account
         conn.execute(
             "INSERT OR IGNORE INTO user (username, password_hash, is_default_password, created_at)"
@@ -93,8 +154,6 @@ def init_db() -> None:
         defaults = [
             ("theme_style",          "classic"),
             ("theme_font",           "inter"),
-            ("disp_w",               "1920"),
-            ("disp_h",               "720"),
             ("card_bg_color",        "#171c24"),
             ("card_bg_opacity",      "1"),
             ("card_gradient",        "false"),
@@ -161,10 +220,13 @@ def _datasource_to_dict(r: sqlite3.Row, include_secret: bool = False) -> dict:
 
 # ── widgets ───────────────────────────────────────────────────────────────────
 
-def list_widgets() -> list[dict]:
+def list_widgets(profile_id: int | None = None) -> list[dict]:
     conn = connect()
     try:
-        rows = conn.execute("SELECT * FROM widget ORDER BY id").fetchall()
+        if profile_id is None:
+            rows = conn.execute("SELECT * FROM widget ORDER BY id").fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM widget WHERE profile_id = ? ORDER BY id", (profile_id,)).fetchall()
         return [_widget_to_dict(r) for r in rows]
     finally:
         conn.close()
@@ -179,18 +241,19 @@ def get_widget(widget_id: int) -> dict | None:
         conn.close()
 
 
-def create_widget(data: dict) -> dict:
+def create_widget(data: dict, profile_id: int) -> dict:
     conn = connect()
     try:
         cur = conn.execute(
-            "INSERT INTO widget (type, title, config, data_source_id, refresh_interval_sec, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO widget (type, title, config, data_source_id, refresh_interval_sec, profile_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 data["type"],
                 data["title"],
                 json.dumps(data.get("config", {})),
                 data.get("data_source_id"),
                 data.get("refresh_interval_sec", 30),
+                profile_id,
                 _now(),
             ),
         )
@@ -227,13 +290,17 @@ def update_widget(widget_id: int, data: dict) -> dict | None:
 def delete_widget(widget_id: int) -> bool:
     conn = connect()
     try:
+        w = conn.execute("SELECT profile_id FROM widget WHERE id = ?", (widget_id,)).fetchone()
         cur = conn.execute("DELETE FROM widget WHERE id = ?", (widget_id,))
-        # scrub from any stacks
-        for r in conn.execute("SELECT id, widget_ids FROM stack").fetchall():
-            ids = json.loads(r["widget_ids"])
-            if widget_id in ids:
-                ids = [i for i in ids if i != widget_id]
-                conn.execute("UPDATE stack SET widget_ids=? WHERE id=?", (json.dumps(ids), r["id"]))
+        # scrub from any stacks in the same profile
+        if w:
+            for r in conn.execute(
+                "SELECT id, widget_ids FROM stack WHERE profile_id = ?", (w["profile_id"],)
+            ).fetchall():
+                ids = json.loads(r["widget_ids"])
+                if widget_id in ids:
+                    ids = [i for i in ids if i != widget_id]
+                    conn.execute("UPDATE stack SET widget_ids=? WHERE id=?", (json.dumps(ids), r["id"]))
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -242,10 +309,13 @@ def delete_widget(widget_id: int) -> bool:
 
 # ── stacks ────────────────────────────────────────────────────────────────────
 
-def list_stacks() -> list[dict]:
+def list_stacks(profile_id: int | None = None) -> list[dict]:
     conn = connect()
     try:
-        rows = conn.execute("SELECT * FROM stack ORDER BY id").fetchall()
+        if profile_id is None:
+            rows = conn.execute("SELECT * FROM stack ORDER BY id").fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM stack WHERE profile_id = ? ORDER BY id", (profile_id,)).fetchall()
         return [_stack_to_dict(r) for r in rows]
     finally:
         conn.close()
@@ -260,15 +330,16 @@ def get_stack(stack_id: int) -> dict | None:
         conn.close()
 
 
-def create_stack(data: dict) -> dict:
+def create_stack(data: dict, profile_id: int) -> dict:
     conn = connect()
     try:
         cur = conn.execute(
-            "INSERT INTO stack (name, widget_ids, cycle_mode, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO stack (name, widget_ids, cycle_mode, profile_id, created_at) VALUES (?, ?, ?, ?, ?)",
             (
                 data["name"],
                 json.dumps(data.get("widget_ids", [])),
                 data.get("cycle_mode", "tap"),
+                profile_id,
                 _now(),
             ),
         )
@@ -298,20 +369,23 @@ def update_stack(stack_id: int, data: dict) -> dict | None:
 def delete_stack(stack_id: int) -> bool:
     conn = connect()
     try:
+        s = conn.execute("SELECT profile_id FROM stack WHERE id = ?", (stack_id,)).fetchone()
         cur = conn.execute("DELETE FROM stack WHERE id = ?", (stack_id,))
-        # scrub from all pages
-        board_row = conn.execute("SELECT layout FROM board WHERE id = 1").fetchone()
-        pages = _parse_pages(board_row["layout"])
-        for page in pages:
-            page["layout"] = [n for n in page["layout"] if n.get("stack_id") != stack_id]
-        conn.execute("UPDATE board SET layout=? WHERE id=1", (json.dumps(pages),))
+        # scrub from that stack's own profile's pages
+        if s and s["profile_id"] is not None:
+            prof = conn.execute("SELECT layout FROM profile WHERE id = ?", (s["profile_id"],)).fetchone()
+            if prof:
+                pages = _parse_pages(prof["layout"])
+                for page in pages:
+                    page["layout"] = [n for n in page["layout"] if n.get("stack_id") != stack_id]
+                conn.execute("UPDATE profile SET layout=? WHERE id=?", (json.dumps(pages), s["profile_id"]))
         conn.commit()
         return cur.rowcount > 0
     finally:
         conn.close()
 
 
-# ── board ─────────────────────────────────────────────────────────────────────
+# ── profiles (boards) ──────────────────────────────────────────────────────────
 
 def _parse_pages(raw: str) -> list[dict]:
     """Parse layout JSON, migrating old flat-array format to pages format."""
@@ -324,27 +398,167 @@ def _parse_pages(raw: str) -> list[dict]:
     return data
 
 
-def get_board() -> dict:
+def _profile_to_dict(r: sqlite3.Row) -> dict:
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "columns": r["columns"],
+        "disp_w": r["disp_w"],
+        "disp_h": r["disp_h"],
+        "is_active": bool(r["is_active"]),
+        "created_at": r["created_at"],
+    }
+
+
+def list_profiles() -> list[dict]:
     conn = connect()
     try:
-        r = conn.execute("SELECT * FROM board WHERE id = 1").fetchone()
-        return {"id": 1, "columns": r["columns"], "pages": _parse_pages(r["layout"])}
+        rows = conn.execute("SELECT * FROM profile ORDER BY id").fetchall()
+        return [_profile_to_dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def update_board(data: dict) -> dict:
-    current = get_board()
+def get_profile(profile_id: int) -> dict | None:
+    conn = connect()
+    try:
+        r = conn.execute("SELECT * FROM profile WHERE id = ?", (profile_id,)).fetchone()
+        if not r:
+            return None
+        d = _profile_to_dict(r)
+        d["pages"] = _parse_pages(r["layout"])
+        return d
+    finally:
+        conn.close()
+
+
+def get_active_profile_id() -> int:
+    conn = connect()
+    try:
+        r = conn.execute("SELECT id FROM profile WHERE is_active = 1").fetchone()
+        if r:
+            return r["id"]
+        # defensive self-heal: shouldn't happen, but never leave the app with no active profile
+        r = conn.execute("SELECT id FROM profile ORDER BY id LIMIT 1").fetchone()
+        if not r:
+            raise RuntimeError("no profiles exist")
+        conn.execute("UPDATE profile SET is_active = 1 WHERE id = ?", (r["id"],))
+        conn.commit()
+        return r["id"]
+    finally:
+        conn.close()
+
+
+def create_profile(name: str, clone_from: int | None = None) -> dict:
+    conn = connect()
+    try:
+        now = _now()
+        if clone_from is not None:
+            src = conn.execute("SELECT * FROM profile WHERE id = ?", (clone_from,)).fetchone()
+            if not src:
+                raise ValueError("source profile not found")
+            cur = conn.execute(
+                "INSERT INTO profile (name, columns, layout, disp_w, disp_h, is_active, created_at)"
+                " VALUES (?, ?, '[]', ?, ?, 0, ?)",
+                (name, src["columns"], src["disp_w"], src["disp_h"], now),
+            )
+            new_id = cur.lastrowid
+
+            widget_id_map: dict[int, int] = {}
+            for w in conn.execute("SELECT * FROM widget WHERE profile_id = ? ORDER BY id", (clone_from,)).fetchall():
+                wc = conn.execute(
+                    "INSERT INTO widget (type, title, config, data_source_id, refresh_interval_sec, profile_id, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (w["type"], w["title"], w["config"], w["data_source_id"], w["refresh_interval_sec"], new_id, now),
+                )
+                widget_id_map[w["id"]] = wc.lastrowid
+
+            stack_id_map: dict[int, int] = {}
+            for s in conn.execute("SELECT * FROM stack WHERE profile_id = ? ORDER BY id", (clone_from,)).fetchall():
+                remapped_widget_ids = [widget_id_map[i] for i in json.loads(s["widget_ids"]) if i in widget_id_map]
+                sc = conn.execute(
+                    "INSERT INTO stack (name, widget_ids, cycle_mode, profile_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (s["name"], json.dumps(remapped_widget_ids), s["cycle_mode"], new_id, now),
+                )
+                stack_id_map[s["id"]] = sc.lastrowid
+
+            pages = _parse_pages(src["layout"])
+            for page in pages:
+                for node in page.get("layout", []):
+                    if node.get("stack_id") in stack_id_map:
+                        node["stack_id"] = stack_id_map[node["stack_id"]]
+            conn.execute("UPDATE profile SET layout = ? WHERE id = ?", (json.dumps(pages), new_id))
+        else:
+            cur = conn.execute(
+                "INSERT INTO profile (name, columns, layout, disp_w, disp_h, is_active, created_at)"
+                " VALUES (?, 6, '[]', 1920, 720, 0, ?)",
+                (name, now),
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+        return get_profile(new_id)
+    finally:
+        conn.close()
+
+
+def rename_profile(profile_id: int, name: str) -> dict | None:
+    conn = connect()
+    try:
+        cur = conn.execute("UPDATE profile SET name = ? WHERE id = ?", (name, profile_id))
+        conn.commit()
+        return get_profile(profile_id) if cur.rowcount else None
+    finally:
+        conn.close()
+
+
+def update_profile_board(profile_id: int, data: dict) -> dict | None:
+    current = get_profile(profile_id)
+    if not current:
+        return None
     columns = data.get("columns", current["columns"])
     pages   = data.get("pages",   current["pages"])
+    disp_w  = data.get("disp_w",  current["disp_w"])
+    disp_h  = data.get("disp_h",  current["disp_h"])
     conn = connect()
     try:
         conn.execute(
-            "UPDATE board SET columns=?, layout=? WHERE id=1",
-            (columns, json.dumps(pages)),
+            "UPDATE profile SET columns=?, layout=?, disp_w=?, disp_h=? WHERE id=?",
+            (columns, json.dumps(pages), disp_w, disp_h, profile_id),
         )
         conn.commit()
-        return get_board()
+        return get_profile(profile_id)
+    finally:
+        conn.close()
+
+
+def set_active_profile(profile_id: int) -> dict | None:
+    conn = connect()
+    try:
+        if not conn.execute("SELECT 1 FROM profile WHERE id = ?", (profile_id,)).fetchone():
+            return None
+        conn.execute("UPDATE profile SET is_active = 0")
+        conn.execute("UPDATE profile SET is_active = 1 WHERE id = ?", (profile_id,))
+        conn.commit()
+        return get_profile(profile_id)
+    finally:
+        conn.close()
+
+
+def delete_profile(profile_id: int) -> str | None:
+    """Returns None on success, or an error string if the delete was refused."""
+    conn = connect()
+    try:
+        count = conn.execute("SELECT COUNT(*) c FROM profile").fetchone()["c"]
+        if count <= 1:
+            return "cannot delete the last remaining profile"
+        row = conn.execute("SELECT is_active FROM profile WHERE id = ?", (profile_id,)).fetchone()
+        if not row:
+            return "not_found"
+        if row["is_active"]:
+            return "cannot delete the active profile — switch to another profile first"
+        conn.execute("DELETE FROM profile WHERE id = ?", (profile_id,))
+        conn.commit()
+        return None
     finally:
         conn.close()
 
@@ -616,23 +830,28 @@ def set_settings(pairs: dict) -> None:
 
 # ── backup / restore ──────────────────────────────────────────────────────────
 
-def dump_config() -> dict:
-    """Raw snapshot of all config tables (IDs preserved, secrets kept as bytes).
+def dump_config(profile_id: int) -> dict:
+    """Raw snapshot of one profile's board/widgets/stacks, plus the global
+    data sources/ping targets/settings (shared across all profiles).
 
     Auth tables (user/session) are intentionally excluded — backups are for
     migrating board config, not credentials to log in.
     """
     conn = connect()
     try:
-        board = conn.execute("SELECT columns, layout FROM board WHERE id = 1").fetchone()
+        prof = conn.execute(
+            "SELECT columns, layout, disp_w, disp_h FROM profile WHERE id = ?", (profile_id,)
+        ).fetchone()
         return {
-            "board": dict(board) if board else None,
+            "board": dict(prof) if prof else None,
             "data_sources": [dict(r) for r in conn.execute(
                 "SELECT id, type, name, base_url, secret, created_at FROM data_source ORDER BY id")],
             "widgets": [dict(r) for r in conn.execute(
-                "SELECT id, type, title, config, data_source_id, refresh_interval_sec, created_at FROM widget ORDER BY id")],
+                "SELECT id, type, title, config, data_source_id, refresh_interval_sec, created_at"
+                " FROM widget WHERE profile_id = ? ORDER BY id", (profile_id,))],
             "stacks": [dict(r) for r in conn.execute(
-                "SELECT id, name, widget_ids, cycle_mode, created_at FROM stack ORDER BY id")],
+                "SELECT id, name, widget_ids, cycle_mode, created_at"
+                " FROM stack WHERE profile_id = ? ORDER BY id", (profile_id,))],
             "ping_targets": [dict(r) for r in conn.execute(
                 "SELECT id, label, address, grp, created_at FROM ping_target ORDER BY id")],
             "settings": [dict(r) for r in conn.execute("SELECT key, value FROM setting")],
@@ -641,20 +860,27 @@ def dump_config() -> dict:
         conn.close()
 
 
-def restore_config(payload: dict) -> None:
-    """Replace board config from a snapshot, preserving original IDs so all
-    cross-references (widget→data_source, stack→widget_ids, board→stack_id) stay
-    intact. data_source `secret` blobs must already be encrypted for this server.
+def restore_config(payload: dict, profile_id: int) -> None:
+    """Replace one profile's board/widgets/stacks from a snapshot, preserving
+    original IDs so cross-references (widget→data_source, stack→widget_ids,
+    board→stack_id) stay intact. Data sources/ping targets/settings are global
+    and get replaced/upserted for the whole app, same as before profiles existed.
+    data_source `secret` blobs must already be encrypted for this server.
     """
     conn = connect()
     try:
         conn.execute("PRAGMA foreign_keys = OFF")
-        for t in ("widget", "stack", "data_source", "ping_target"):
+        conn.execute("DELETE FROM widget WHERE profile_id = ?", (profile_id,))
+        conn.execute("DELETE FROM stack WHERE profile_id = ?", (profile_id,))
+        for t in ("data_source", "ping_target"):
             conn.execute(f"DELETE FROM {t}")
 
         b = payload.get("board")
         if b:
-            conn.execute("UPDATE board SET columns=?, layout=? WHERE id=1", (b["columns"], b["layout"]))
+            conn.execute(
+                "UPDATE profile SET columns=?, layout=?, disp_w=?, disp_h=? WHERE id=?",
+                (b["columns"], b["layout"], b.get("disp_w", 1920), b.get("disp_h", 720), profile_id),
+            )
 
         for r in payload.get("data_sources", []):
             conn.execute(
@@ -662,14 +888,14 @@ def restore_config(payload: dict) -> None:
                 (r["id"], r["type"], r["name"], r["base_url"], r.get("secret"), r["created_at"]))
         for r in payload.get("widgets", []):
             conn.execute(
-                "INSERT INTO widget (id, type, title, config, data_source_id, refresh_interval_sec, created_at)"
-                " VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO widget (id, type, title, config, data_source_id, refresh_interval_sec, profile_id, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
                 (r["id"], r["type"], r["title"], r["config"], r.get("data_source_id"),
-                 r["refresh_interval_sec"], r["created_at"]))
+                 r["refresh_interval_sec"], profile_id, r["created_at"]))
         for r in payload.get("stacks", []):
             conn.execute(
-                "INSERT INTO stack (id, name, widget_ids, cycle_mode, created_at) VALUES (?,?,?,?,?)",
-                (r["id"], r["name"], r["widget_ids"], r["cycle_mode"], r["created_at"]))
+                "INSERT INTO stack (id, name, widget_ids, cycle_mode, profile_id, created_at) VALUES (?,?,?,?,?,?)",
+                (r["id"], r["name"], r["widget_ids"], r["cycle_mode"], profile_id, r["created_at"]))
         for r in payload.get("ping_targets", []):
             conn.execute(
                 "INSERT INTO ping_target (id, label, address, grp, created_at) VALUES (?,?,?,?,?)",

@@ -30,12 +30,17 @@ def _derive_key(passphrase: str, salt: bytes, iterations: int = _ITERATIONS) -> 
     return base64.urlsafe_b64encode(kdf.derive(passphrase.encode()))
 
 
-def export_backup(passphrase: str) -> dict:
-    """Build an encrypted backup envelope from the current config."""
+def export_backup(passphrase: str, profile_id: int | None = None) -> dict:
+    """Build an encrypted backup envelope from the current config.
+
+    Scoped to one profile's board/widgets/stacks (defaults to the active
+    profile) — data sources/ping targets/settings are global and always
+    included in full.
+    """
     if not passphrase:
         raise ValueError("passphrase required")
 
-    snap = db.dump_config()
+    snap = db.dump_config(profile_id if profile_id is not None else db.get_active_profile_id())
     # Swap each encrypted secret blob for its plaintext credentials dict so the
     # bundle is portable; the whole bundle is then re-encrypted under the passphrase.
     portable = []
@@ -57,7 +62,7 @@ def export_backup(passphrase: str) -> dict:
     }
 
 
-def restore_backup(envelope: dict, passphrase: str) -> None:
+def restore_backup(envelope: dict, passphrase: str, profile_id: int | None = None) -> None:
     """Decrypt a backup envelope and replace the current config with it."""
     if not isinstance(envelope, dict) or envelope.get("format") != FORMAT:
         raise ValueError("not a TouchBoard backup file")
@@ -77,4 +82,4 @@ def restore_backup(envelope: dict, passphrase: str) -> None:
     for ds in snap.get("data_sources", []):
         creds = ds.pop("credentials", {}) or {}
         ds["secret"] = secrets.encrypt(creds) if creds else None
-    db.restore_config(snap)
+    db.restore_config(snap, profile_id if profile_id is not None else db.get_active_profile_id())

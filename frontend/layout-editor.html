@@ -21,10 +21,17 @@
     </label>
     <span class="spacer"></span>
     <nav class="topbar-settings-nav">
+      <div class="topbar-dropdown" id="profile-dropdown">
+        <button class="topbar-settings-btn topbar-dropdown-toggle" id="profile-menu-btn" data-tip="Switch which board profile you're editing">
+          <span id="profile-menu-label">Profile</span> <span class="dd-caret">▾</span>
+        </button>
+        <div class="topbar-dropdown-menu hidden" id="profile-menu" role="menu"></div>
+      </div>
       <button class="topbar-settings-btn" data-section="Designer" data-tip="Customize card styles and board appearance">Designer</button>
       <div class="topbar-dropdown" id="settings-dropdown">
         <button class="topbar-settings-btn topbar-dropdown-toggle" id="settings-menu-btn" data-tip="Settings">Settings <span class="dd-caret">▾</span></button>
         <div class="topbar-dropdown-menu hidden" id="settings-menu" role="menu">
+          <button class="topbar-menu-item" data-section="Profiles">Manage Profiles</button>
           <button class="topbar-menu-item" data-section="Ping Targets">Manage Ping Targets</button>
           <button class="topbar-menu-item" data-section="Integrations">Manage Integrations</button>
           <button class="topbar-menu-item" data-section="Users">Users</button>

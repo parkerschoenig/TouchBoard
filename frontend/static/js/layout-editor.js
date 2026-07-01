@@ -74,6 +74,7 @@ let grid;
 let saveTimer = null;
 let dispW = 1920;
 let dispH = 720;
+let editingProfileId = null; // which profile the editor is currently working on
 
 function currentPage() {
   return board.pages[currentPageIdx] ?? board.pages[0];
@@ -2274,6 +2275,118 @@ async function openSettingsPanel(section) {
   contentEl.className = "settings-content";
   dlg.appendChild(contentEl);
 
+  // ── Profiles tab ───────────────────────────────────────────────────────────
+  async function renderProfilesTab() {
+    contentEl.innerHTML = "";
+
+    let profiles = [];
+    try { profiles = await api.listProfiles(); } catch { /* ignore */ }
+
+    const addSection = document.createElement("div");
+    addSection.className = "settings-add-section";
+    const addBtn = document.createElement("button");
+    addBtn.className = "settings-add-btn";
+    addBtn.innerHTML = "<span>＋</span> New Profile";
+    addSection.appendChild(addBtn);
+
+    const addForm = document.createElement("div");
+    addForm.className = "settings-add-form hidden";
+    addSection.appendChild(addForm);
+
+    addBtn.addEventListener("click", () => {
+      addForm.classList.toggle("hidden");
+      if (!addForm.classList.contains("hidden") && !addForm.children.length) {
+        const nameInput = Object.assign(document.createElement("input"), {
+          className: "sb-form-input", placeholder: "Profile name",
+        });
+        addForm.appendChild(makeSbRow("Name", nameInput));
+        const createBtn = Object.assign(document.createElement("button"), {
+          type: "button", className: "small primary", textContent: "Create",
+        });
+        createBtn.addEventListener("click", async () => {
+          const name = nameInput.value.trim();
+          if (!name) return;
+          await api.createProfile(name);
+          addForm.classList.add("hidden");
+          addForm.innerHTML = "";
+          renderProfilesTab();
+          renderProfileMenu();
+        });
+        addForm.appendChild(createBtn);
+      }
+    });
+    contentEl.appendChild(addSection);
+
+    if (!profiles.length) {
+      contentEl.appendChild(Object.assign(document.createElement("div"), {
+        className: "settings-empty", textContent: "No profiles yet.",
+      }));
+      return;
+    }
+
+    const list = document.createElement("div");
+    list.className = "settings-ds-list";
+
+    for (const p of profiles) {
+      const card = document.createElement("div");
+      card.className = "settings-ds-card";
+
+      const cardHead = document.createElement("div");
+      cardHead.className = "settings-ds-head";
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "settings-ds-name";
+      nameSpan.textContent = p.name;
+      if (p.is_active) {
+        const badge = document.createElement("span");
+        badge.className = "settings-ds-badge";
+        badge.textContent = "Active";
+        badge.style.setProperty("--ds-color", "#fbbf24");
+        cardHead.appendChild(badge);
+      }
+      cardHead.appendChild(nameSpan);
+
+      const editBtn = Object.assign(document.createElement("button"), {
+        className: "sb-icon-btn", title: "Rename", textContent: "✎",
+      });
+      editBtn.addEventListener("click", async () => {
+        const name = prompt("Rename profile", p.name);
+        if (!name || !name.trim() || name === p.name) return;
+        await api.renameProfile(p.id, name.trim());
+        renderProfilesTab();
+        renderProfileMenu();
+      });
+
+      const dupBtn = Object.assign(document.createElement("button"), {
+        className: "sb-icon-btn", title: "Duplicate", textContent: "⧉",
+      });
+      dupBtn.addEventListener("click", async () => {
+        await api.duplicateProfile(p.id, `${p.name} copy`);
+        renderProfilesTab();
+        renderProfileMenu();
+      });
+
+      const delBtn = Object.assign(document.createElement("button"), {
+        className: "sb-icon-btn danger", title: "Delete", textContent: "✕",
+      });
+      delBtn.addEventListener("click", async () => {
+        if (!confirm(`Delete profile "${p.name}"? This also deletes its widgets and stacks.`)) return;
+        try {
+          await api.deleteProfile(p.id);
+          renderProfilesTab();
+          renderProfileMenu();
+        } catch (err) {
+          alert(err.message.includes("400") ? "Can't delete the active profile — switch to another one first." : "Couldn't delete profile.");
+        }
+      });
+
+      cardHead.append(editBtn, dupBtn, delBtn);
+      card.appendChild(cardHead);
+      list.appendChild(card);
+    }
+    contentEl.appendChild(list);
+  }
+
   // ── Integrations tab ──────────────────────────────────────────────────────
   async function renderIntegrationsTab() {
     contentEl.innerHTML = "";
@@ -3360,7 +3473,8 @@ async function openSettingsPanel(section) {
   dlg.showModal();
   _makeDraggable(dlg, head);
 
-  if (section === "Ping Targets") renderPingTargetsTab();
+  if (section === "Profiles") renderProfilesTab();
+  else if (section === "Ping Targets") renderPingTargetsTab();
   else if (section === "Users") renderUsersTab();
   else if (section === "Integrations") renderIntegrationsTab();
   else if (section === "Designer") renderDesignerTab();
@@ -3870,6 +3984,71 @@ async function checkForUpdate() {
   } catch { /* ignore — non-critical */ }
 }
 
+// Switching which profile the editor is working on reloads the page (simpler
+// and safer than hot-swapping GridStack/page-tab state in place) — persist
+// the choice across that reload via sessionStorage.
+function switchEditingProfile(profileId) {
+  sessionStorage.setItem("tb_editing_profile_id", String(profileId));
+  window.location.reload();
+}
+
+async function renderProfileMenu(profiles) {
+  const label = byId("profile-menu-label");
+  const menu = byId("profile-menu");
+  if (!label || !menu) return;
+  profiles = profiles || await api.listProfiles().catch(() => []);
+
+  const current = profiles.find((p) => p.id === editingProfileId);
+  label.textContent = current ? current.name : "Profile";
+
+  menu.innerHTML = "";
+  for (const p of profiles) {
+    const row = document.createElement("div");
+    row.className = "topbar-menu-item profile-menu-row" + (p.id === editingProfileId ? " active" : "");
+
+    const nameBtn = document.createElement("button");
+    nameBtn.type = "button";
+    nameBtn.className = "profile-menu-name";
+    nameBtn.textContent = p.name;
+    if (p.is_active) nameBtn.title = "Currently live on /display";
+    nameBtn.addEventListener("click", () => switchEditingProfile(p.id));
+    row.appendChild(nameBtn);
+
+    if (p.is_active) {
+      row.appendChild(Object.assign(document.createElement("span"), {
+        className: "profile-active-dot", title: "Live on /display",
+      }));
+    } else {
+      const activateBtn = document.createElement("button");
+      activateBtn.type = "button";
+      activateBtn.className = "sb-icon-btn";
+      activateBtn.title = "Set as active — makes this profile live on /display";
+      activateBtn.textContent = "★";
+      activateBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await api.activateProfile(p.id);
+        renderProfileMenu();
+      });
+      row.appendChild(activateBtn);
+    }
+    menu.appendChild(row);
+  }
+
+  const divider = document.createElement("div");
+  divider.className = "topbar-menu-divider";
+  menu.appendChild(divider);
+
+  const manageBtn = document.createElement("button");
+  manageBtn.type = "button";
+  manageBtn.className = "topbar-menu-item";
+  manageBtn.textContent = "Manage Profiles…";
+  manageBtn.addEventListener("click", () => {
+    openSettingsPanel("Profiles");
+    byId("profile-menu")?.classList.add("hidden");
+  });
+  menu.appendChild(manageBtn);
+}
+
 async function init() {
   // Auth check — redirect to login if not authenticated
   let currentUser;
@@ -3891,6 +4070,16 @@ async function init() {
 
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
+
+  // Which profile to edit: whatever was last selected (persisted across the
+  // reload triggered by switching in the dropdown), else the active profile.
+  const profiles = await api.listProfiles();
+  const storedId = Number(sessionStorage.getItem("tb_editing_profile_id"));
+  editingProfileId = profiles.some((p) => p.id === storedId)
+    ? storedId
+    : (profiles.find((p) => p.is_active) ?? profiles[0])?.id;
+  api.setEditingProfile(editingProfileId);
+  renderProfileMenu(profiles);
 
   const full = await api.boardFull();
   board   = full.board;
@@ -3931,8 +4120,8 @@ async function init() {
   applyCardStyle(currentCardSettings, byId("preview-viewport"));
   byId("preview-viewport").style.setProperty("--widget-font-scale", settings.widget_font_scale || "1");
   if (settings.board_bg_color) { const _vp = byId("preview-viewport"); if (_vp) _vp.style.backgroundColor = settings.board_bg_color; }
-  dispW = parseInt(settings.disp_w || "") || 1920;
-  dispH = parseInt(settings.disp_h || "") || 720;
+  dispW = board.disp_w || 1920;
+  dispH = board.disp_h || 720;
   byId("res-w").value = dispW;
   byId("res-h").value = dispH;
 
@@ -4160,6 +4349,22 @@ async function init() {
     });
   }
 
+  // Profile-switcher dropdown open/close
+  const profileMenuBtn = byId("profile-menu-btn");
+  const profileMenu = byId("profile-menu");
+  if (profileMenuBtn && profileMenu) {
+    profileMenuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      profileMenu.classList.toggle("hidden");
+    });
+    document.addEventListener("click", (e) => {
+      if (!profileMenu.classList.contains("hidden") &&
+          !profileMenu.contains(e.target) && !profileMenuBtn.contains(e.target)) {
+        profileMenu.classList.add("hidden");
+      }
+    });
+  }
+
   renderWidgets();
   renderPageTabs();
   renderBoard();
@@ -4177,7 +4382,7 @@ async function init() {
   function onResChange() {
     dispW = Math.max(320, parseInt(byId("res-w").value) || 1920);
     dispH = Math.max(240, parseInt(byId("res-h").value) || 720);
-    api.updateSettings({ disp_w: String(dispW), disp_h: String(dispH) });
+    api.updateProfileBoard(editingProfileId, { disp_w: dispW, disp_h: dispH });
     byId("res-w").value = dispW;
     byId("res-h").value = dispH;
     updatePreviewSize();
