@@ -31,13 +31,18 @@ def _local_sha() -> str | None:
 
 
 async def _latest_remote() -> tuple[str, str, str] | None:
-    """Returns (sha, html_url, label) for the newest release, or main's HEAD if no release exists."""
+    """Returns (sha, html_url, label) for the newest release, or main's HEAD if no release exists.
+
+    Uses the releases list rather than /releases/latest — this project ships
+    prereleases (betas), and GitHub's /latest endpoint deliberately excludes
+    those, so it would never see a beta as "latest".
+    """
     headers = {"Accept": "application/vnd.github+json"}
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers) as client:
         try:
-            r = await client.get(f"https://api.github.com/repos/{REPO}/releases/latest")
-            if r.status_code == 200:
-                rel = r.json()
+            r = await client.get(f"https://api.github.com/repos/{REPO}/releases", params={"per_page": 1})
+            if r.status_code == 200 and r.json():
+                rel = r.json()[0]
                 tag = rel.get("tag_name")
                 cr = await client.get(f"https://api.github.com/repos/{REPO}/commits/{tag}")
                 if cr.status_code == 200:
