@@ -182,6 +182,18 @@ input[type=radio] { width: auto; padding: 0; background: none; border: none; }
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
+.topbar-menu-divider { height: 1px; background: var(--border); margin: 4px 2px; }
+.profile-menu-row { padding: 2px 2px 2px 4px; }
+.profile-menu-row.active .profile-menu-name { color: var(--accent); }
+.profile-menu-name {
+  flex: 1; background: transparent; border: none; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; padding: 6px 8px; border-radius: 6px;
+}
+.profile-menu-name:hover { background: var(--panel-2); }
+.profile-active-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(251,191,36,.7); margin-right: 8px;
+}
 
 
 /* ── modal (shared) ────────────────────────────────────────────────────────── */

@@ -18,21 +18,42 @@ async function req(method, path, body) {
   return resp.json();
 }
 
-export const api = {
-  boardFull: () => req("GET", "/api/board/full"),
-  getBoard: () => req("GET", "/api/board"),
-  updateBoard: (b) => req("PUT", "/api/board", b),
+// Editor-only: which profile the layout editor is currently working on. Unset
+// (null) means "whatever profile is active" — that's what /display always
+// wants, and what the editor wants too until it knows better (see init()).
+let _editingProfileId = null;
+function withProfile(path) {
+  if (_editingProfileId == null) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}profile_id=${_editingProfileId}`;
+}
 
-  listWidgets: () => req("GET", "/api/widgets"),
-  createWidget: (w) => req("POST", "/api/widgets", w),
+export const api = {
+  setEditingProfile: (id) => { _editingProfileId = id; },
+  getEditingProfile: () => _editingProfileId,
+
+  boardFull: () => req("GET", withProfile("/api/board/full")),
+  getBoard: () => req("GET", withProfile("/api/board")),
+  updateBoard: (b) => req("PUT", withProfile("/api/board"), b),
+
+  listWidgets: () => req("GET", withProfile("/api/widgets")),
+  createWidget: (w) => req("POST", withProfile("/api/widgets"), w),
   updateWidget: (id, w) => req("PUT", `/api/widgets/${id}`, w),
   deleteWidget: (id) => req("DELETE", `/api/widgets/${id}`),
   widgetData: (id) => req("GET", `/api/widgets/${id}/data`),
 
-  listStacks: () => req("GET", "/api/stacks"),
-  createStack: (s) => req("POST", "/api/stacks", s),
+  listStacks: () => req("GET", withProfile("/api/stacks")),
+  createStack: (s) => req("POST", withProfile("/api/stacks"), s),
   updateStack: (id, s) => req("PUT", `/api/stacks/${id}`, s),
   deleteStack: (id) => req("DELETE", `/api/stacks/${id}`),
+
+  listProfiles: () => req("GET", "/api/profiles"),
+  getActiveProfile: () => req("GET", "/api/profiles/active"),
+  createProfile: (name) => req("POST", "/api/profiles", { name }),
+  duplicateProfile: (id, name) => req("POST", `/api/profiles/${id}/duplicate`, { name }),
+  renameProfile: (id, name) => req("PATCH", `/api/profiles/${id}`, { name }),
+  updateProfileBoard: (id, data) => req("PATCH", `/api/profiles/${id}`, data),
+  deleteProfile: (id) => req("DELETE", `/api/profiles/${id}`),
+  activateProfile: (id) => req("POST", `/api/profiles/${id}/activate`),
 
   listDataSources: () => req("GET", "/api/datasources"),
   createDataSource: (d) => req("POST", "/api/datasources", d),
