@@ -1089,12 +1089,18 @@ function _calDateStr(d) { // "YYYY-MM-DD" for a local Date
 function _renderCalList(events) {
   const wrap = el("div", "w-calendar");
 
-  function _fmtDay(iso) {
+  // key is always a local-calendar-date "YYYY-MM-DD" string (see _calDayKey) —
+  // build the header from it directly rather than re-parsing an event's raw
+  // `start`. Re-parsing is what caused the bug: an all-day event's `start` is
+  // a bare date ("2026-07-09", no "T"), which JS parses as UTC midnight, so in
+  // negative-UTC-offset zones it renders as the *previous* local day.
+  function _fmtDay(key) {
+    const [y, m, d] = key.split("-").map(Number);
+    const eDay = new Date(y, m - 1, d);
     const today = _calToday(), tomorrow = new Date(today.getTime() + 86400000);
-    const eDay  = new Date(new Date(iso).toDateString());
     if (+eDay === +today)    return "Today";
     if (+eDay === +tomorrow) return "Tomorrow";
-    return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    return eDay.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
   }
 
   const byDay = new Map();
@@ -1103,8 +1109,10 @@ function _renderCalList(events) {
     if (!byDay.has(k)) byDay.set(k, []);
     byDay.get(k).push(ev);
   }
-  for (const [, dayEvs] of byDay) {
-    wrap.appendChild(el("div", "cal-day-header", _fmtDay(dayEvs[0].start)));
+  for (const [key, dayEvs] of byDay) {
+    // All-day events first, then timed events in chronological order.
+    dayEvs.sort((a, b) => (b.all_day - a.all_day) || a.start.localeCompare(b.start));
+    wrap.appendChild(el("div", "cal-day-header", _fmtDay(key)));
     for (const ev of dayEvs) {
       const row = el("div", "cal-event");
       row.appendChild(el("span", "cal-event-time", _calFmtTime(ev.start, ev.all_day)));
@@ -1127,6 +1135,9 @@ function _renderCalWeek(events) {
     const k = _calDayKey(ev);
     if (!byDay.has(k)) byDay.set(k, []);
     byDay.get(k).push(ev);
+  }
+  for (const dayEvs of byDay.values()) {
+    dayEvs.sort((a, b) => (b.all_day - a.all_day) || a.start.localeCompare(b.start));
   }
 
   for (let i = 0; i < 7; i++) {
