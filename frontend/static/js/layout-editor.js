@@ -346,18 +346,7 @@ function buildWidgetItem(w) {
 
   delBtn.addEventListener("click", async () => {
     if (!confirm(`Delete widget "${w.title}"?`)) return;
-    await api.deleteWidget(w.id);
-    // Remove from any stacks that contain it
-    for (const s of stacks) {
-      if (s.widget_ids.includes(w.id)) {
-        s.widget_ids = s.widget_ids.filter((id) => id !== w.id);
-        await api.updateStack(s.id, { widget_ids: s.widget_ids });
-      }
-    }
-    widgets = widgets.filter((x) => x.id !== w.id);
-    reindex();
-    renderWidgets();
-    refreshGridCards();
+    await deleteWidgetAndScrub(w);
   });
 
   return item;
@@ -1062,17 +1051,8 @@ async function openWidgetModal(w = null, opts = {}) {
     delBtn.style.marginRight = "auto";
     delBtn.addEventListener("click", async () => {
       if (!confirm(`Delete widget "${w.title}"?`)) return;
-      await api.deleteWidget(w.id);
-      for (const s of stacks) {
-        if (s.widget_ids.includes(w.id)) {
-          s.widget_ids = s.widget_ids.filter(id => id !== w.id);
-          await api.updateStack(s.id, { widget_ids: s.widget_ids });
-        }
-      }
-      widgets = widgets.filter(x => x.id !== w.id);
-      reindex();
+      await deleteWidgetAndScrub(w);
       dlg.close();
-      renderWidgets(); refreshGridCards();
     });
     footer.appendChild(delBtn);
   }
@@ -1585,6 +1565,35 @@ function syncPaletteStates() {
   if (hint) hint.style.display = placedIds.size === 0 ? "flex" : "none";
 }
 
+// Deletes a widget, scrubs it out of every stack that references it, and — if
+// that leaves a stack with no widgets left — removes that now-empty card from
+// the board grid and deletes the stack too, rather than leaving a dangling
+// "No widgets" card behind.
+async function deleteWidgetAndScrub(w) {
+  await api.deleteWidget(w.id);
+  const emptied = [];
+  for (const s of stacks) {
+    if (s.widget_ids.includes(w.id)) {
+      s.widget_ids = s.widget_ids.filter((id) => id !== w.id);
+      await api.updateStack(s.id, { widget_ids: s.widget_ids });
+      if (s.widget_ids.length === 0) emptied.push(s);
+    }
+  }
+  widgets = widgets.filter((x) => x.id !== w.id);
+  reindex();
+  for (const s of emptied) {
+    const item = grid && [...grid.getGridItems()].find((el) => Number(el.dataset.stackId) === s.id);
+    if (item) grid.removeWidget(item);
+    placedIds.delete(s.id);
+    phantomStackIds.delete(s.id);
+    stacks = stacks.filter((x) => x.id !== s.id);
+    await api.deleteStack(s.id).catch(() => {});
+  }
+  if (emptied.length) { syncPaletteStates(); saveLayoutSoon(); }
+  renderWidgets();
+  refreshGridCards();
+}
+
 // Refresh all placed grid cards (e.g. after a widget is renamed/deleted)
 function refreshGridCards() {
   if (!grid) return;
@@ -1649,8 +1658,12 @@ function buildPlacedContent(stack, initialPage = 0) {
   dragHandle.append(gripSpan, nameSpan);
   card.appendChild(dragHandle);
 
-  const validWidgets = stack.widget_ids.map((id) => widgetsById[id]).filter(Boolean);
-  let pageIdx = Math.min(initialPage, Math.max(0, validWidgets.length - 1));
+  // Recomputed on every render (not captured once) so deleting/merging a widget
+  // elsewhere in the app is reflected immediately instead of showing a stale page.
+  function getValidWidgets() {
+    return stack.widget_ids.map((id) => widgetsById[id]).filter(Boolean);
+  }
+  let pageIdx = initialPage;
 
   const widgetArea = document.createElement("div");
   widgetArea.className = "layout-widget-area";
@@ -1665,6 +1678,8 @@ function buildPlacedContent(stack, initialPage = 0) {
   pagBar.className = "lc-pag-bar";
 
   function renderPage() {
+    const validWidgets = getValidWidgets();
+    pageIdx = Math.min(pageIdx, Math.max(0, validWidgets.length - 1));
     widgetArea.innerHTML = "";
     if (!validWidgets.length) {
       widgetArea.appendChild(Object.assign(document.createElement("div"), { className: "placed-empty", textContent: "No widgets" }));
@@ -1687,6 +1702,7 @@ function buildPlacedContent(stack, initialPage = 0) {
   renderPage();
   card._renderPage   = renderPage;
   card._navigatePage = (dir) => {
+    const validWidgets = getValidWidgets();
     const next = Math.max(0, Math.min(validWidgets.length - 1, pageIdx + dir));
     if (next !== pageIdx) { pageIdx = next; renderPage(); }
   };
@@ -1734,7 +1750,7 @@ function buildPlacedContent(stack, initialPage = 0) {
   editBtn.dataset.tip = "Edit widget appearance and stack settings";
   editBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const currentWidget = validWidgets[pageIdx];
+    const currentWidget = getValidWidgets()[pageIdx];
     const envelope = currentWidget ? liveData[currentWidget.id] : null;
     openWidgetAppearancePopover(editBtn, currentWidget, envelope?.data, () => openStackModal(stack));
   });
