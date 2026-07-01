@@ -50,6 +50,7 @@ export const api = {
 
   getSettings: ()  => req("GET",   "/api/settings"),
   updateSettings: (s) => req("PATCH", "/api/settings", s),
+  checkUpdate: () => req("GET", "/api/update-check"),
 
   me: () => req("GET", "/api/auth/me"),
   login: (username, password) => req("POST", "/api/auth/login", { username, password }),

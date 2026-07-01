@@ -3853,6 +3853,23 @@ function initTooltips() {
   });
 }
 
+// The backend caches the actual GitHub call (checks every few hours), so
+// polling this endpoint client-side is cheap — it's just reading local state.
+async function checkForUpdate() {
+  const badge = byId("update-badge");
+  if (!badge) return;
+  try {
+    const state = await api.checkUpdate();
+    if (state.update_available && state.url) {
+      badge.href = state.url;
+      badge.title = `Update available: ${state.label} — click to view on GitHub`;
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
+  } catch { /* ignore — non-critical */ }
+}
+
 async function init() {
   // Auth check — redirect to login if not authenticated
   let currentUser;
@@ -3871,6 +3888,9 @@ async function init() {
     await api.logout().catch(() => {});
     window.location.href = "/login";
   });
+
+  checkForUpdate();
+  setInterval(checkForUpdate, 30 * 60 * 1000);
 
   const full = await api.boardFull();
   board   = full.board;
