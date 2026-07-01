@@ -308,11 +308,24 @@ async function refreshStructure() {
   buildBoard(full);
 }
 
+// Non-interactive on this page (no auth session) — just a low-opacity corner
+// indicator. Backend caches the actual GitHub call, so cheap to poll here too.
+async function checkForUpdate() {
+  const badge = document.getElementById("display-update-badge");
+  if (!badge) return;
+  try {
+    const state = await api.checkUpdate();
+    badge.classList.toggle("hidden", !state.update_available);
+  } catch { /* ignore — non-critical */ }
+}
+
 async function init() {
   setupNavigation();
   await refreshStructure();
   connectSSE();
+  checkForUpdate();
   setInterval(refreshStructure, 15000);
+  setInterval(checkForUpdate, 30 * 60 * 1000);
 }
 
 init();

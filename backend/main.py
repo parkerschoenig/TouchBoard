@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from . import db
 from .api.routes import router as api_router
 from .poller import poller
+from .update_check import checker as update_checker
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
 
@@ -18,7 +19,9 @@ FRONTEND = Path(__file__).parent.parent / "frontend"
 async def lifespan(app: FastAPI):
     db.init_db()
     poller.start()
+    update_checker.start()
     yield
+    await update_checker.stop()
     await poller.stop()
 
 

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
-from .. import db, secrets, integrations, backup
+from .. import db, secrets, integrations, backup, update_check
 from ..auth import generate_token, hash_password, verify_password
 from ..models import (
     BackupExportIn,
@@ -76,6 +76,11 @@ def patch_settings(body: SettingsPatch, user: dict = Depends(current_user)):
     settings = db.get_all_settings()
     poller._publish({"type": "settings_update", "data": settings})
     return settings
+
+
+@router.get("/update-check")  # public — display + login pages need it, same as /settings
+def get_update_check():
+    return update_check.get_state()
 
 
 @router.get("/auth/me")

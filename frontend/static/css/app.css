@@ -117,6 +117,30 @@ input[type=radio] { width: auto; padding: 0; background: none; border: none; }
 .topbar-icon-btn.active:hover { background: rgba(251,191,36,.14); }
 .topbar-signout-btn { font-size: 13px; padding: 5px 10px; }
 
+/* ── update-available badge (topbar) ─────────────────────────────────────── */
+.update-badge {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; padding: 5px 10px;
+  color: #fbbf24; border-color: rgba(251,191,36,.3); background: rgba(251,191,36,.08);
+}
+.update-badge:hover { background: rgba(251,191,36,.16); color: #fbbf24; }
+.update-badge.hidden { display: none; }
+.update-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(251,191,36,.7);
+}
+
+/* ── update-available badge (kiosk /display overlay) ─────────────────────── */
+.display-update-badge {
+  position: fixed; top: 10px; right: 10px; z-index: 50;
+  font-size: 11px; font-weight: 600; letter-spacing: .2px;
+  padding: 4px 10px; border-radius: 999px;
+  color: #fbbf24; background: rgba(10,14,20,.55);
+  border: 1px solid rgba(251,191,36,.3);
+  opacity: .45; pointer-events: none;
+}
+.display-update-badge.hidden { display: none; }
+
 /* ── topbar settings nav ──────────────────────────────────────────────────── */
 .topbar-settings-nav {
   display: flex; gap: 2px; align-items: center;
