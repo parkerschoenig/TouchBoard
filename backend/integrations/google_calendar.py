@@ -6,6 +6,7 @@ than only on the series' original (often long-past) start date.
 """
 import re
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 from dateutil.rrule import rrulestr
@@ -25,25 +26,42 @@ def _unescape(val: str) -> str:
     )
 
 
-def _parse_dt(val: str, all_day: bool = False) -> str:
+def _resolve_tz(tzid: str | None) -> timezone | ZoneInfo:
+    """Resolve a TZID param to a tzinfo, falling back to UTC if unknown."""
+    if tzid:
+        try:
+            return ZoneInfo(tzid)
+        except Exception:
+            pass
+    return timezone.utc
+
+
+def _parse_dt(val: str, all_day: bool = False, tzid: str | None = None) -> str:
     val = val.strip()
     if all_day:
         try:
             return datetime.strptime(val, "%Y%m%d").date().isoformat()
         except ValueError:
             return val
-    for fmt in ("%Y%m%dT%H%M%SZ", "%Y%m%dT%H%M%S"):
-        try:
-            return datetime.strptime(val, fmt).isoformat()
-        except ValueError:
-            pass
+    try:
+        dt = datetime.strptime(val, "%Y%m%dT%H%M%SZ")
+        return dt.replace(tzinfo=timezone.utc).isoformat()
+    except ValueError:
+        pass
+    try:
+        dt = datetime.strptime(val, "%Y%m%dT%H%M%S")
+        # A bare local time only means UTC if no TZID param was given.
+        return dt.replace(tzinfo=_resolve_tz(tzid)).isoformat()
+    except ValueError:
+        pass
     return val
 
 
-def _dtstart_to_dt(raw: str, all_day: bool) -> datetime | None:
+def _dtstart_to_dt(raw: str, all_day: bool, tzid: str | None = None) -> datetime | None:
     """Parse a raw DTSTART value into a datetime for rrule expansion.
 
-    All-day → naive midnight datetime. Timed → aware UTC datetime.
+    All-day → naive midnight datetime. Timed → aware datetime (UTC, or the
+    event's own TZID zone if one was specified).
     """
     raw = raw.strip()
     if all_day:
@@ -51,12 +69,16 @@ def _dtstart_to_dt(raw: str, all_day: bool) -> datetime | None:
             return datetime.strptime(raw, "%Y%m%d")
         except ValueError:
             return None
-    for fmt in ("%Y%m%dT%H%M%SZ", "%Y%m%dT%H%M%S"):
-        try:
-            dt = datetime.strptime(raw, fmt)
-            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-        except ValueError:
-            pass
+    try:
+        dt = datetime.strptime(raw, "%Y%m%dT%H%M%SZ")
+        return dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+    try:
+        dt = datetime.strptime(raw, "%Y%m%dT%H%M%S")
+        return dt.replace(tzinfo=_resolve_tz(tzid))
+    except ValueError:
+        pass
     return None
 
 
@@ -116,15 +138,17 @@ def _parse_ics_raw(text: str) -> list[dict]:
             base_key = raw_key.split(";")[0].upper()
             params = raw_key.split(";")[1:]
             is_date_only = any("VALUE=DATE" in p for p in params)
+            tzid = next((p.split("=", 1)[1] for p in params if p.upper().startswith("TZID=")), None)
 
             if base_key == "SUMMARY":
                 ev["title"] = _unescape(val)
             elif base_key == "DTSTART":
                 ev["all_day"] = is_date_only
-                ev["start"] = _parse_dt(val, all_day=is_date_only)
+                ev["start"] = _parse_dt(val, all_day=is_date_only, tzid=tzid)
                 ev["_dtstart_raw"] = val.strip()
+                ev["_dtstart_tzid"] = tzid
             elif base_key == "DTEND":
-                ev["end"] = _parse_dt(val, all_day=is_date_only)
+                ev["end"] = _parse_dt(val, all_day=is_date_only, tzid=tzid)
             elif base_key == "RRULE":
                 ev["_rrule"] = val.strip()
             elif base_key == "EXDATE":
@@ -150,7 +174,7 @@ def _expand_recurring(events: list[dict], days_ahead: int) -> list[dict]:
             out.append(ev)
             continue
 
-        base = _dtstart_to_dt(ev.get("_dtstart_raw", ""), ev.get("all_day", False))
+        base = _dtstart_to_dt(ev.get("_dtstart_raw", ""), ev.get("all_day", False), ev.get("_dtstart_tzid"))
         if base is None:
             out.append(ev)
             continue
