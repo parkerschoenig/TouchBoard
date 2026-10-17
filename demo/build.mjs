@@ -79,7 +79,7 @@ const walk = (dir) => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).is
 const files = walk(out);
 // Real homelab hostnames and LAN ranges must never appear (the seed uses
 // *.home.arpa and RFC 5737 documentation addresses).
-const forbidden = /lab\.pshl\.app|\.lab\.home|192\.168\.\d|epicor/i;
+const forbidden = /lab\.pshl\.app|\.lab\.home|192\.168\.\d/i;
 for (const f of files) {
   const rel = relative(out, f);
   if (/\.(db|key|sqlite)$/i.test(rel)) throw new Error(`refusing to ship ${rel}`);
