@@ -8,6 +8,8 @@
  *                                       navigation, resets on a browser reload
  *   - DemoKit.router() / installFetch() in-browser API: same-origin /api/* only
  *   - DemoKit.ribbon({...})             the "Live demo" pill linking back to the portfolio
+ *                                       (opts: slug, position, prodUrl, prodLabel,
+ *                                       compactWhenEmbedded)
  *   - DemoKit.toast(), download()       small UI helpers
  */
 (function (g) {
@@ -301,7 +303,7 @@
       '<span class="label"><b>Live demo</b><span class="hide"> · changes reset on reload</span></span>' +
       '<button class="reset hide" type="button" title="Start over with fresh sample data">Reset</button>' +
       '<a class="hide" href="' + back + '" target="_top">← Portfolio</a>' +
-      (opts.prodUrl ? '<a class="hide" href="' + opts.prodUrl + '" target="_blank" rel="noopener">' + new URL(opts.prodUrl).host + ' ↗</a>' : '') +
+      (opts.prodUrl ? '<a class="hide" href="' + opts.prodUrl + '" target="_blank" rel="noopener">' + (opts.prodLabel || new URL(opts.prodUrl).host + ' ↗') + '</a>' : '') +
       '<button class="min" type="button" aria-label="Collapse demo controls">–</button>' +
       '</div><div class="toast" role="status" aria-live="polite"></div>';
     root.querySelector('.reset').addEventListener('click', resetDemo);
