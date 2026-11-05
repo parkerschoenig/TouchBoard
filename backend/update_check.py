@@ -2,7 +2,10 @@
 than the one currently running, so the UI can show an "update available" badge.
 
 Comparison is against the actual running git commit rather than a manually
-maintained version file, so it stays correct without extra bookkeeping.
+maintained version file, so it stays correct without extra bookkeeping. An
+update is only reported when the remote commit is not already contained in
+the running checkout, so running main ahead of the last release, or a newer
+branch, does not show the badge.
 """
 import asyncio
 import subprocess
@@ -19,15 +22,30 @@ _REPO_ROOT = Path(__file__).parent.parent
 _state: dict = {"checked_at": None, "update_available": False, "sha": None, "url": None, "label": None}
 
 
-def _local_sha() -> str | None:
+def _git(*args: str) -> subprocess.CompletedProcess | None:
     try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=_REPO_ROOT,
-            capture_output=True, text=True, timeout=5,
-        )
-        return out.stdout.strip() or None
+        # safe.directory: the service may run as a different user than the one
+        # owning the checkout (e.g. root), and git refuses such repos otherwise.
+        return subprocess.run(["git", "-c", f"safe.directory={_REPO_ROOT.as_posix()}", *args],
+                              cwd=_REPO_ROOT, capture_output=True, text=True, timeout=5)
     except Exception:
         return None
+
+
+def _local_sha() -> str | None:
+    out = _git("rev-parse", "HEAD")
+    return (out.stdout.strip() or None) if out else None
+
+
+def _already_contains(local: str, remote: str) -> bool:
+    """True when `remote` is `local` or one of its ancestors, i.e. the running
+    code already includes it. A commit this checkout has never fetched is
+    unknown to git (exit 128) and counts as not contained, which is the case
+    for a genuinely newer release."""
+    if remote == local:
+        return True
+    out = _git("merge-base", "--is-ancestor", remote, local)
+    return bool(out) and out.returncode == 0
 
 
 async def _latest_remote() -> tuple[str, str, str] | None:
@@ -68,7 +86,7 @@ async def _check_once() -> None:
     sha, url, label = remote
     _state.update({
         "checked_at": time.time(),
-        "update_available": sha != local,
+        "update_available": not _already_contains(local, sha),
         "sha": sha,
         "url": url,
         "label": label,
