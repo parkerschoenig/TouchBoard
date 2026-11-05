@@ -1685,8 +1685,9 @@ body.display { overflow: hidden; }
 
 /* ── Ping target library picker (accordion + chip design) ────────────────── */
 .wm-ping-library { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
-.ping-picker { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; margin-top: 4px; }
-.pp-group { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.ping-picker { display: flex; flex-direction: column; gap: 6px; max-height: min(420px, 50vh); overflow-y: auto; margin-top: 4px; }
+/* flex-shrink 0: with several groups the list scrolls instead of squashing each group to its header */
+.pp-group { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
 .pp-group-head {
   display: flex; align-items: center; gap: 8px; padding: 8px 10px;
   background: var(--panel-2); cursor: pointer; user-select: none;
