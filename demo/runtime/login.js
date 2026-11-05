@@ -1,8 +1,6 @@
 // TouchBoard demo — login page: same theming as login.js, one-click sign-in.
 import { applyTheme } from "/static/js/theme.js";
-import { initThemeSwitcher } from "/static/js/theme-switcher.js";
-
-initThemeSwitcher();
+import "/static/js/editor/app-theme.js"; // this device's editor theme
 
 fetch("/api/settings").then(r => r.json()).then(s => {
   applyTheme({ palette: s.theme_palette, style: s.theme_style, font: s.theme_font });

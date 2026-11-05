@@ -266,7 +266,98 @@
     }
   }
 
+  // ── v2 widgets ─────────────────────────────────────────────────────────────
+  // Images can't come from /api in the demo (only fetch() is intercepted), so
+  // photos and artwork are generated SVGs passed inline as data: URLs.
+  function svgUrl(svg) { return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); }
+  var SKIES = [['#1e3c72', '#f8b195', '#2a2340'], ['#134e5e', '#71b280', '#1b2d24'], ['#2c3e50', '#fd746c', '#26203a'],
+    ['#0f2027', '#2c5364', '#10181c'], ['#41295a', '#ff9a8b', '#2b1d33'], ['#355c7d', '#c06c84', '#1f2a36']];
+  function landscape(i) {
+    var s = SKIES[i % SKIES.length], sun = 120 + (i * 97) % 520;
+    return svgUrl('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice">' +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + s[0] + '"/><stop offset="1" stop-color="' + s[1] + '"/></linearGradient></defs>' +
+      '<rect width="800" height="500" fill="url(#g)"/><circle cx="' + sun + '" cy="150" r="70" fill="#ffe8b0" opacity=".9"/>' +
+      '<path d="M0 500 L' + (180 + i * 30 % 120) + ' 250 L420 500Z" fill="' + s[2] + '"/>' +
+      '<path d="M260 500 L' + (520 + i * 40 % 160) + ' 290 L800 500Z" fill="' + s[2] + '" opacity=".85"/></svg>');
+  }
+  function poster(title, a, b) {
+    return svgUrl('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300"><defs><linearGradient id="p" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="' + a + '"/><stop offset="1" stop-color="' + b + '"/></linearGradient></defs>' +
+      '<rect width="200" height="300" fill="url(#p)"/><text x="16" y="270" fill="#fff" font-family="sans-serif" font-size="22" font-weight="700">' +
+      title.replace(/[<&]/g, '') + '</text></svg>');
+  }
+
+  function bookmarks(w) {
+    var checks = {}, i = 0;
+    ((w.config || {}).groups || []).forEach(function (g) {
+      (g.items || []).forEach(function (it) {
+        if (it.check && it.url) {
+          var down = /down|offline/i.test(it.label || '') || (r.next() < 0.02);
+          checks[String(i)] = { label: it.label || it.url, up: !down, latency_ms: down ? null : walk('bm' + w.id + i, 3, 0.4, 40, 1.5), detail: down ? 'TimeoutError' : 'TCP open' };
+        }
+        i++;
+      });
+    });
+    return { count: i, checks: checks };
+  }
+
+  function rest(w) {
+    var cfg = w.config || {};
+    var values = (cfg.fields || []).map(function (f, k) {
+      var v = /uptime|duration/i.test(f.label) ? 86400 * 9 + Math.floor(Date.now() / 1000) % 86400
+        : f.format === 'bytes' ? walk('rb' + w.id + k, 4.2e11, 1e11, 9e11, 2e9)
+        : walk('rv' + w.id + k, 40 + k * 17, 1, 99, 3);
+      return { label: f.label || f.path || 'value', value: v, unit: f.unit || '', format: f.format || 'auto', max: f.max, decimals: f.decimals };
+    });
+    var rows = cfg.list && cfg.list.path ? ['api', 'worker', 'scheduler', 'queue'].map(function (n) {
+      return { label: n, value: r.next() < 0.1 ? 'degraded' : 'ok' };
+    }) : [];
+    return { status: 200, values: values, rows: rows };
+  }
+
+  var SHOWS = [
+    { title: 'Severance', subtitle: 'S02E04 · Woe’s Hollow', type: 'episode', user: 'sam', device: 'Living Room TV', d: 2880, c: ['#0f2b46', '#4f8fc0'] },
+    { title: 'Dune: Part Two', subtitle: '2024', type: 'movie', user: 'alex', device: 'Projector', d: 9960, c: ['#6b3d12', '#e0a35a'] },
+    { title: 'Weightless', subtitle: 'Marconi Union · Ambient', type: 'track', user: 'kitchen', device: 'Kitchen speaker', d: 480, c: ['#1d3b2f', '#7cc6a0'] },
+  ];
+  var showStart = Date.now();
+  function nowplaying(w) {
+    var t = (Date.now() - showStart) / 1000;
+    var sessions = SHOWS.map(function (s, i) {
+      var pos = (i * 900 + t * (i === 1 ? 0 : 1)) % s.d;
+      return {
+        title: s.title, subtitle: s.subtitle, type: s.type, user: s.user, device: s.device,
+        state: i === 1 ? 'paused' : 'playing', duration_s: s.d, position_s: Math.round(pos), progress: pos / s.d,
+        art_path: null, art_url: poster(s.title, s.c[0], s.c[1]),
+      };
+    });
+    return { server: 'jellyfin', sessions: sessions.slice(0, Number((w.config || {}).max_sessions) || 4) };
+  }
+
+  function photos(w) {
+    var urls = [];
+    for (var i = 0; i < 6; i++) urls.push(landscape(i));
+    var names = ['Lake at dawn', 'Pine ridge', 'Coastline', 'Night drive', 'Desert light', 'Harbor'];
+    return { source: 'urls', count: urls.length, urls: urls, names: (w.config || {}).caption ? names : [] };
+  }
+
+  var HEADLINES = [
+    ['Kernel 6.18 lands with faster NVMe queues', 'Linux News'], ['Proxmox VE 9.1 adds live VM snapshots over NFS', 'Homelab Weekly'],
+    ['ZFS 2.4 brings RAIDZ expansion to more pools', 'Storage Digest'], ['Home Assistant ships local voice for 30 languages', 'Smart Home Today'],
+    ['Why your UPS battery is lying to you', 'Homelab Weekly'], ['Self-hosted photo apps compared', 'Linux News'],
+    ['OPNsense 26.1 roadmap published', 'Network Notes'], ['A 10 W ARM server that runs everything', 'Storage Digest'],
+  ];
+  function rss(w) {
+    var now = Date.now() / 1000;
+    var items = HEADLINES.map(function (h, i) {
+      return { title: h[0], link: 'https://example.com/news/' + (i + 1), ts: now - (i * 47 + 12) * 60, summary: 'A short summary of the story so the spotlight layout has something to show.', image: landscape(i + 2), source: h[1] };
+    });
+    return { items: items.slice(0, Number((w.config || {}).max_items) || 20), feed_errors: [] };
+  }
+
   var REGISTRY = {
+    bookmarks: bookmarks, rest: rest, nowplaying: nowplaying, photos: photos, rss: rss,
+    notes: function () { return { static: true }; },
     clock: function () { return {}; },
     stream: function (w) { var u = (w.config || {}).stream_url; return u ? { url: u } : { error: 'No stream URL configured' }; },
     proxmox: proxmox, truenas: truenas, netbox: netbox, adguard: adguard, opnsense: opnsense,

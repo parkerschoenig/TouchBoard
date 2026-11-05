@@ -6,7 +6,7 @@
 (function (g) {
   'use strict';
   var K = g.DemoKit;
-  var SEED_VERSION = 1;
+  var SEED_VERSION = 2;
   var LS_STATE = 'demo:touchboard:state';
   var LS_ROLE = 'demo:touchboard:signed-in';
   var tab = Math.random().toString(36).slice(2);
@@ -87,10 +87,69 @@
     };
     g.EventSource.CONNECTING = 0; g.EventSource.OPEN = 1; g.EventSource.CLOSED = 2;
 
+    var history = {};
+    var HISTORY_LEN = 60;
+    function num(v) { var n = Number(v); return v == null || typeof v === 'boolean' || isNaN(n) ? null : n; }
+    function pingLike(targets) {
+      var out = {}, up = 0;
+      (targets || []).forEach(function (t) { var l = t.label || t.address || '?'; out['latency:' + l] = t.up ? num(t.latency_ms) : null; if (t.up) up++; });
+      if ((targets || []).length) { out.up_pct = Math.round(up / targets.length * 1000) / 10; out.down = targets.length - up; }
+      return out;
+    }
+    function metricsOf(type, d) {
+      if (!d || d.error) return {};
+      var o = {};
+      if (type === 'ping') return pingLike(d.targets);
+      if (type === 'bookmarks') return pingLike(Object.keys(d.checks || {}).map(function (k) { return d.checks[k]; }));
+      if (type === 'proxmox') { o.cpu = num(d.cluster_cpu_pct); o.ram = num(d.cluster_mem_pct); (d.nodes || []).forEach(function (n) { o['cpu:' + n.name] = num(n.cpu_pct); o['ram:' + n.name] = num(n.mem_pct); }); return o; }
+      if (type === 'truenas') { o.cpu = num(d.cpu_pct); (d.pools || []).forEach(function (p) { if (p.total) o['pool:' + p.name] = Math.round(p.used / p.total * 1000) / 10; }); return o; }
+      if (type === 'opnsense') { o.cpu = num(d.cpu_pct); o.mem = num(d.mem_pct); (d.interfaces || []).forEach(function (i) { var n = i.name || i.device; o['rx:' + n] = num(i.rx_mbps); o['tx:' + n] = num(i.tx_mbps); }); return o; }
+      if (type === 'adguard') return { queries: num(d.queries_today), blocked_pct: num(d.blocked_pct) };
+      if (type === 'weather') return { temp: num((d.current || {}).temperature), humidity: num((d.current || {}).humidity) };
+      if (type === 'rest') { (d.values || []).forEach(function (v) { var n = num(v.value); if (n != null) o['field:' + v.label] = n; }); return o; }
+      if (type === 'nowplaying') return { streams: (d.sessions || []).length };
+      if (type === 'rss') return { items: (d.items || []).length };
+      return o;
+    }
+    var LV = { warn: 1, crit: 2 };
+    function globMatch(pattern, key) {
+      var re = new RegExp('^' + pattern.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+      return re.test(key);
+    }
+    function alertOf(w, d, m) {
+      var cfg = w.config || {}, items = [];
+      if (d && d.error) { if (cfg.alert_on_error) items.push({ key: 'error', value: null, level: 'warn', message: String(d.error).slice(0, 160) }); }
+      else {
+        if ((w.type === 'ping' || w.type === 'bookmarks') && cfg.alert_on_down !== false) {
+          var ts = w.type === 'ping' ? (d && d.targets) : Object.keys((d && d.checks) || {}).map(function (k) { return d.checks[k]; });
+          (ts || []).forEach(function (t) { if (t.up === false) { var l = t.label || t.address || 'target'; items.push({ key: 'down:' + l, value: null, level: 'crit', message: l + ' is down' }); } });
+        }
+        (cfg.alerts || []).forEach(function (rule) {
+          var pat = String(rule.metric || '').trim(); if (!pat) return;
+          var op = rule.op === '<' ? '<' : '>';
+          var keys = /[*?]/.test(pat) ? Object.keys(m).filter(function (k) { return globMatch(pat, k); }) : [pat];
+          keys.forEach(function (k) {
+            var v = m[k]; if (v == null) return;
+            var hit = function (t) { return t !== null && t !== '' && t !== undefined && (op === '<' ? v < Number(t) : v > Number(t)); };
+            var level = hit(rule.crit) ? 'crit' : hit(rule.warn) ? 'warn' : null;
+            if (level) items.push({ key: k, value: v, level: level, message: (k.indexOf(':') > -1 ? k.split(':').slice(1).join(':') : k) + ' ' + op + ' ' + rule[level] + ' (' + Math.round(v * 10) / 10 + ')' });
+          });
+        });
+      }
+      var level = null;
+      items.forEach(function (i) { if ((LV[i.level] || 0) > (LV[level] || 0)) level = i.level; });
+      return { level: level, items: items };
+    }
+
     async function poll(w) {
       lastRun[w.id] = Date.now();
       var data = await g.TouchBoardDemoData.generate(w, { pingTargets: state.pingTargets });
-      var env = { widget_id: w.id, type: w.type, data: data, ts: Date.now() / 1000 };
+      var m = metricsOf(w.type, data);
+      var series = history[w.id] = history[w.id] || {};
+      Object.keys(m).forEach(function (k) { (series[k] = series[k] || []).push(m[k] == null ? null : Math.round(m[k] * 100) / 100); if (series[k].length > HISTORY_LEN) series[k].shift(); });
+      Object.keys(series).forEach(function (k) { if (!(k in m)) delete series[k]; });
+      var env = { widget_id: w.id, type: w.type, data: data, ts: Date.now() / 1000, interval: w.refresh_interval_sec,
+        metrics: m, history: JSON.parse(JSON.stringify(series)), alert: alertOf(w, data, m) };
       cache[w.id] = env;
       publish(env, true);
       return env;
@@ -98,9 +157,13 @@
     setInterval(function () {
       if (document.hidden) return;
       var live = {};
+      var placed = {};
+      state.profiles.forEach(function (p) { (p.pages || []).forEach(function (pg) { (pg.layout || []).forEach(function (n) {
+        var s = state.stacks.find(function (x) { return x.id === n.stack_id; }); if (s) s.widget_ids.forEach(function (id) { placed[id] = true; });
+      }); }); });
       state.widgets.forEach(function (w) {
         live[w.id] = true;
-        var interval = Math.max(2, w.refresh_interval_sec || 0) * 1000;
+        var interval = Math.max(placed[w.id] ? 2 : 60, w.refresh_interval_sec || 0) * 1000;
         if (!(w.id in lastRun) || Date.now() - lastRun[w.id] >= interval) poll(w);
       });
       Object.keys(cache).forEach(function (id) { if (!live[id]) { delete cache[id]; delete lastRun[id]; } });
@@ -116,7 +179,7 @@
     var strip = function (o) { var c = clone(o); delete c.profile_id; return c; };
     var byId = function (list, id) { return list.find(function (x) { return x.id === Number(id); }); };
     var profileOut = function (p, withPages) {
-      var o = { id: p.id, name: p.name, columns: p.columns, disp_w: p.disp_w, disp_h: p.disp_h, is_active: !!p.is_active, created_at: p.created_at };
+      var o = { id: p.id, name: p.name, columns: p.columns, rows: p.rows || 16, options: clone(p.options || {}), disp_w: p.disp_w, disp_h: p.disp_h, is_active: !!p.is_active, created_at: p.created_at };
       if (withPages) o.pages = clone(p.pages && p.pages.length ? p.pages : [{ id: 1, name: 'Page 1', layout: [] }]);
       return o;
     };
@@ -141,7 +204,7 @@
       });
       var pages = clone(src.pages || []);
       pages.forEach(function (pg) { (pg.layout || []).forEach(function (n) { if (n.stack_id in smap) n.stack_id = smap[n.stack_id]; }); });
-      var p = { id: id, name: name, columns: src.columns, disp_w: src.disp_w, disp_h: src.disp_h, is_active: false, created_at: nowIso(), pages: pages };
+      var p = { id: id, name: name, columns: src.columns, rows: src.rows || 16, options: clone(src.options || {}), disp_w: src.disp_w, disp_h: src.disp_h, is_active: false, created_at: nowIso(), pages: pages };
       state.profiles.push(p);
       return p;
     }
@@ -149,7 +212,7 @@
     function dumpConfig(profileId) {
       var p = byId(state.profiles, profileId);
       return {
-        board: { columns: p.columns, layout: JSON.stringify(p.pages), disp_w: p.disp_w, disp_h: p.disp_h },
+        board: { columns: p.columns, layout: JSON.stringify(p.pages), disp_w: p.disp_w, disp_h: p.disp_h, rows: p.rows || 16, options: JSON.stringify(p.options || {}) },
         data_sources: state.dataSources.map(function (d) {
           return { id: d.id, type: d.type, name: d.name, base_url: d.base_url, created_at: d.created_at, credentials: state.secrets[d.id] || demoCreds(d.type) };
         }),
@@ -173,6 +236,8 @@
         p.pages = JSON.parse(snap.board.layout || '[]');
         p.disp_w = snap.board.disp_w || 1920;
         p.disp_h = snap.board.disp_h || 720;
+        p.rows = snap.board.rows || 16;
+        try { p.options = JSON.parse(snap.board.options || '{}'); } catch (e) { p.options = {}; }
       }
       state.dataSources = (snap.data_sources || []).map(function (d) {
         state.secrets[d.id] = d.credentials || {};
@@ -201,6 +266,9 @@
         adguard: { username: 'touchboard', password: 'demo-not-a-real-password' },
         opnsense: { api_key: 'demo-key', api_secret: 'demo-not-a-real-secret' },
         google_calendar: { ical_urls: 'https://calendar.google.com/calendar/ical/demo/private-0000/basic.ics' },
+        plex: { token: 'demo-not-a-real-token' },
+        jellyfin: { api_key: 'demo-not-a-real-key' },
+        rest: { headers: 'Authorization: Bearer demo-not-a-real-token' },
       }[type] || {};
     }
 
@@ -265,12 +333,36 @@
       var w = byId(state.widgets, ctx.params.id); if (!w) return notFound('widget');
       return K.json(cache[w.id] || await poll(w));
     });
+    api.post('/api/widgets/:id/poll', auth(async function (ctx) {
+      var w = byId(state.widgets, ctx.params.id); if (!w) return notFound('widget');
+      return K.json(await poll(w));
+    }));
+    api.get('/api/widgets/:id/favicon/:i', function () { return K.json({ detail: 'no icon' }, 404); });
+    api.get('/api/widgets/:id/art/:i', function () { return K.json({ detail: 'no art' }, 404); });
+    api.get('/api/widgets/:id/photo/:i', function () { return K.json({ detail: 'not in the demo' }, 404); });
+    api.post('/api/rest/preview', auth(function (ctx) {
+      var b = ctx.body || {};
+      if (!b.url) return K.json({ ok: false, error: 'Set a full URL (http://…), or pick a REST data source and use a relative path.' });
+      K.toast('Demo: this is sample JSON. In production TouchBoard calls the URL from the server.');
+      return K.json({ ok: true, status: 200, body: {
+        status: 'ok', version: '2.4.1', uptime_seconds: 812345,
+        stats: { requests_per_min: 1240, error_rate: 0.4, queue_depth: 7, disk_used_bytes: 412345678901 },
+        services: [{ name: 'api', status: 'ok' }, { name: 'worker', status: 'ok' }, { name: 'scheduler', status: 'degraded' }],
+      } });
+    }));
+    api.post('/api/notify/test', auth(function () {
+      if (!state.settings.notify_ntfy_url && !state.settings.notify_webhook_url) return K.json({ detail: 'Set an ntfy URL or a webhook URL first.' }, 400);
+      K.toast('Demo: a test notification would be sent now.');
+      return K.json({ ok: true });
+    }));
+
     api.get('/api/widgets/:id', auth(function (ctx) { var w = byId(state.widgets, ctx.params.id); return w ? K.json(strip(w)) : notFound('widget'); }));
     api.put('/api/widgets/:id', auth(function (ctx) {
       var w = byId(state.widgets, ctx.params.id); if (!w) return notFound('widget');
       var b = ctx.body || {};
       ['type', 'title', 'config', 'data_source_id', 'refresh_interval_sec'].forEach(function (k) { if (k in b && b[k] != null) w[k] = b[k]; });
       delete lastRun[w.id];
+      delete history[w.id];
       commit([{ type: 'widget_update', widget_id: w.id }]);
       poll(w);
       return K.json(strip(w));
@@ -311,14 +403,33 @@
       var p = byId(state.profiles, pid(ctx)); if (!p) return notFound('profile');
       var b = ctx.body || {};
       if (b.columns != null) p.columns = b.columns;
+      if (b.rows != null) p.rows = b.rows;
+      if (b.options != null) p.options = b.options;
       if (b.pages != null) p.pages = b.pages;
       commit();
       return K.json(profileOut(p, true));
     }));
     api.get('/api/board/full', function (ctx) {
-      var id = pid(ctx), p = byId(state.profiles, id);
+      var id = pid(ctx);
+      if (ctx.query.profile_id == null && ctx.query.profile) {
+        var ref = String(ctx.query.profile).trim().toLowerCase();
+        var found = state.profiles.find(function (x) { return String(x.id) === ref || x.name.toLowerCase() === ref; });
+        if (!found) return K.json({ detail: 'no profile named ' + JSON.stringify(ctx.query.profile) }, 404);
+        id = found.id;
+      }
+      var p = byId(state.profiles, id);
       return K.json({ board: p ? profileOut(p, true) : null, stacks: stacksOf(id), widgets: widgetsOf(id) });
     });
+
+    api.post('/api/board/cleanup', auth(function (ctx) {
+      var p = byId(state.profiles, pid(ctx)); if (!p) return notFound('profile');
+      var used = {};
+      (p.pages || []).forEach(function (pg) { (pg.layout || []).forEach(function (n) { used[n.stack_id] = true; }); });
+      var before = state.stacks.length;
+      state.stacks = state.stacks.filter(function (s) { return s.profile_id !== p.id || used[s.id]; });
+      commit();
+      return K.json({ removed: before - state.stacks.length });
+    }));
 
     api.get('/api/profiles', auth(function () { return K.json(state.profiles.map(function (p) { return profileOut(p, false); })); }));
     api.get('/api/profiles/active', function () { return K.json({ profile_id: activeId() }); });
@@ -342,7 +453,7 @@
       var p = byId(state.profiles, ctx.params.id); if (!p) return notFound('profile');
       var b = ctx.body || {};
       if (b.name != null) p.name = b.name;
-      ['columns', 'pages', 'disp_w', 'disp_h'].forEach(function (k) { if (b[k] != null) p[k] = b[k]; });
+      ['columns', 'rows', 'options', 'pages', 'disp_w', 'disp_h'].forEach(function (k) { if (b[k] != null) p[k] = b[k]; });
       commit(p.is_active ? [{ type: 'active_profile_changed', profile_id: p.id }] : []);
       return K.json(profileOut(p, true));
     }));

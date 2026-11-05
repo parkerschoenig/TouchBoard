@@ -16,6 +16,7 @@
       ['adguard', 'AdGuard Home', 'https://dns.home.arpa'],
       ['opnsense', 'OPNsense', 'https://fw.home.arpa'],
       ['google_calendar', 'Family calendar', 'https://calendar.google.com'],
+      ['jellyfin', 'Jellyfin', 'https://media.home.arpa'],
     ].map(function (d, i) {
       return { id: i + 1, type: d[0], name: d[1], base_url: d[2], has_secret: true, created_at: now };
     });
@@ -55,7 +56,7 @@
     // ── Profile 1: the 1920×720 rack screen ────────────────────────────────
     var clock = w(1, 'clock', 'Clock', { clock_mode: 'digital', clock_format: '24h', clock_style: 'full', clock_timezone: 'America/New_York' }, null, 0);
     var truenas = w(1, 'truenas', 'TrueNAS', { pool_name: '', views: [{ key: 'storage', enabled: true }, { key: 'memory', enabled: true }, { key: 'cpu', enabled: true }] }, 'truenas', 5);
-    var proxmox = w(1, 'proxmox', 'Proxmox', {}, 'proxmox', 3);
+    var proxmox = w(1, 'proxmox', 'Proxmox', { alerts: [{ metric: 'cpu:*', op: '>', warn: 70, crit: 90 }, { metric: 'ram', op: '>', warn: 80, crit: 92 }] }, 'proxmox', 3);
     var netbox = w(1, 'netbox', 'NetBox', { rack_name: '12U Homelab Rack', views: [{ key: 'rack', enabled: true }, { key: 'ips', enabled: true }, { key: 'vms', enabled: true }, { key: 'devices', enabled: true }] }, 'netbox', 60);
     var weather = w(1, 'weather', 'Weather', { location_name: 'New York', latitude: 40.7128, longitude: -74.006, units: 'fahrenheit', forecast_days: 7 }, null, 300);
     var pingAll = w(1, 'ping', 'All Pings', { target_ids: media.concat(storage) }, null, 5);
@@ -65,6 +66,32 @@
     var opnsense = w(1, 'opnsense', 'OPNsense', { widget_theme: 'dark', ops_cpu_color: '#ee6d11' }, 'opnsense', 2);
     var calendar = w(1, 'calendar', 'Google Calendar', { calendar_view: 'list', days_ahead: 31, max_events: 25 }, 'google_calendar', 300);
     var pingStorage2 = w(1, 'ping', 'Storage Pings', { target_ids: storage }, null, 5);
+    var nowPlaying = w(1, 'nowplaying', 'Now playing', { show_user: true, show_device: true, max_sessions: 3 }, 'jellyfin', 10);
+    var photos = w(1, 'photos', 'Photo frame', { source: 'folder', folder: '/srv/photos/frame', interval: 12, fit: 'cover', shuffle: false, kenburns: true, caption: true }, null, 300);
+    var news = w(1, 'rss', 'Headlines', { feeds: ['https://example.com/feed.xml'], layout: 'spotlight', max_items: 8, rotate_sec: 10, show_source: true, show_images: true, open: 'qr' }, null, 300);
+    var links = w(1, 'bookmarks', 'Apps', { layout: 'tiles', open: 'qr', groups: [
+      { name: 'Media', items: [
+        { label: 'Jellyfin', url: 'https://media.home.arpa', icon: 'di:jellyfin', check: true },
+        { label: 'Sonarr', url: 'https://sonarr.home.arpa', icon: 'di:sonarr', check: true },
+        { label: 'Radarr', url: 'https://radarr.home.arpa', icon: 'di:radarr', check: true },
+        { label: 'Prowlarr', url: 'https://prowlarr.home.arpa', icon: 'di:prowlarr', check: true },
+        { label: 'Overseerr', url: 'https://requests.home.arpa', icon: 'di:overseerr', check: false },
+        { label: 'Navidrome', url: 'https://music.home.arpa', icon: 'di:navidrome', check: false },
+      ] },
+      { name: 'Infra', items: [
+        { label: 'Proxmox', url: 'https://pve.home.arpa:8006', icon: 'di:proxmox', check: true },
+        { label: 'TrueNAS', url: 'https://nas.home.arpa', icon: 'di:truenas-scale', check: true },
+        { label: 'Grafana', url: 'https://grafana.home.arpa', icon: 'di:grafana', check: true },
+        { label: 'Home Assistant', url: 'https://ha.home.arpa', icon: 'di:home-assistant', check: true },
+      ] },
+    ] }, null, 20);
+    var note = w(1, 'notes', 'Notes', { text: '## This week\n- [x] Swap the UPS battery\n- [ ] **Scrub** the tank pool\n- [ ] Renew the wildcard cert\n\nBackups run at `02:00`.', size: 1, align: 'left', tint: '#a78bfa', open: 'qr' }, null, 300);
+    var api = w(1, 'rest', 'Service API', { url: 'https://api.home.arpa/v1/status', method: 'GET', display: 'stats', fields: [
+      { label: 'Requests / min', path: 'stats.requests_per_min', format: 'number' },
+      { label: 'Queue', path: 'stats.queue_depth', format: 'number' },
+      { label: 'Disk used', path: 'stats.disk_used_bytes', format: 'bytes' },
+      { label: 'Uptime', path: 'uptime_seconds', format: 'duration' },
+    ], list: { path: 'services[*]', label: 'name', value: 'status', limit: 4 }, sparklines: true }, null, 15);
 
     var p1 = [
       { id: 1, name: 'Page 1', layout: [
@@ -80,6 +107,13 @@
         node(s(1, 'Storage Pings', [pingStorage2]), 0, 9, 5, 7),
         node(s(1, 'OPNsense', [opnsense]), 5, 0, 7, 16),
         node(s(1, 'Google Calendar', [calendar]), 12, 0, 12, 16),
+      ] },
+      { id: 3, name: 'Media & links', layout: [
+        node(s(1, 'Now playing', [nowPlaying]), 0, 0, 8, 9),
+        node(s(1, 'Notes', [note, api], 'auto'), 0, 9, 8, 7),
+        node(s(1, 'Photo frame', [photos]), 8, 0, 9, 9),
+        node(s(1, 'Headlines', [news]), 8, 9, 9, 7),
+        node(s(1, 'Apps', [links]), 17, 0, 7, 16),
       ] },
     ];
 
@@ -98,18 +132,22 @@
     ];
 
     var profiles = [
-      { id: 1, name: 'Homelab', columns: 24, disp_w: 1920, disp_h: 720, is_active: true, created_at: now, pages: p1 },
-      { id: 2, name: 'Kitchen', columns: 12, disp_w: 1280, disp_h: 800, is_active: false, created_at: now, pages: p2 },
+      { id: 1, name: 'Homelab', columns: 24, rows: 16, disp_w: 1920, disp_h: 720, is_active: true, created_at: now, pages: p1,
+        options: { rotate_sec: 0, stack_cycle_sec: 10, alert_takeover: true, staleness: true, wake_lock: true, edit_on_display: true } },
+      { id: 2, name: 'Kitchen', columns: 12, rows: 16, disp_w: 1280, disp_h: 800, is_active: false, created_at: now, pages: p2,
+        options: { rotate_sec: 30, night: { enabled: true, start: '22:00', end: '06:30', brightness: 0.3, page: null } } },
     ];
 
+    // Aurora Glass is the demo's default display theme (Designer → Display theme to switch).
     var settings = {
-      theme_style: 'soft', theme_font: 'inter',
-      board_bg_color: '#060912',
-      card_bg_color: '#13111a', card_bg_opacity: '1',
-      card_gradient: 'true', card_bg2_color: '#1a1628', card_bg2_opacity: '1', card_gradient_dir: '135',
-      card_stroke_color: '#2d2640', card_stroke_opacity: '1', card_stroke_width: '1',
-      card_accent_color: '#818cf8', card_accent_opacity: '1', card_accent_width: '3',
-      card_glow: 'true', card_glow_color: '#818cf8', card_glow_opacity: '0.15', card_glow_size: '16',
+      theme_style: 'aurora', theme_font: 'manrope',
+      board_bg_color: '#070a16',
+      card_bg_color: '#ffffff', card_bg_opacity: '0.08',
+      card_gradient: 'false', card_bg2_color: '#ffffff', card_bg2_opacity: '0', card_gradient_dir: '160',
+      card_stroke_color: '#ffffff', card_stroke_opacity: '0.18', card_stroke_width: '1',
+      card_accent_color: '#5eead4', card_accent_opacity: '0', card_accent_width: '0',
+      card_glow: 'false', card_glow_color: '#a78bfa', card_glow_opacity: '0.2', card_glow_size: '16',
+      notify_ntfy_url: '', notify_webhook_url: '', notify_min_level: 'crit', notify_cooldown_min: '15',
       card_presets: '[]', widget_font_scale: '1',
       onboarding_done: 'true', tips_enabled: 'true',
     };
