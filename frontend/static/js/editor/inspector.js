@@ -51,8 +51,8 @@ function btn(text, onClick, cls = "") {
 // ── camera pop-ups: Frigate connections and cameras, fetched once a minute ───
 const POP_LABELS = [["person", "People"], ["car", "Cars"], ["dog", "Dogs"], ["cat", "Cats"], ["bicycle", "Bikes"], ["package", "Packages"]];
 let _frigate = { at: 0, promise: null };
-function frigateInfo() {
-  if (_frigate.promise && Date.now() - _frigate.at < 60000) return _frigate.promise;
+function frigateInfo(fresh = false) {
+  if (!fresh && _frigate.promise && Date.now() - _frigate.at < 60000) return _frigate.promise;
   _frigate.at = Date.now();
   _frigate.promise = (async () => {
     const sources = (await (await fetch("/api/datasources")).json()).filter((d) => d.type === "frigate");
@@ -76,7 +76,18 @@ function cameraSection(o, set) {
   const save = (k, v) => { cp[k] = v; set("camera_popup", { ...cp }); };
   const camsEl = h("div", { class: "insp-checks" }, h("span", { class: "insp-hint", text: "Loading cameras from Frigate…" }));
   const status = h("span", { class: "insp-hint" });
+  const watch = h("span", { class: "insp-hint" });
   let info = null;
+  const ago = (t) => { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+  const showWatch = (res) => {
+    if (!res?.source) { watch.textContent = ""; return; }
+    if (res.error) { watch.textContent = `Frigate: ${res.error}`; watch.className = "insp-hint insp-warn"; return; }
+    watch.className = "insp-hint";
+    const ev = res.last_event;
+    watch.textContent = ev ? `Last detection TouchBoard saw: ${ev.label} on ${ev.camera}, ${ago(ev.at)}.`
+      : res.watching ? "Watching Frigate. No new detections since TouchBoard started." : "Starting to watch Frigate…";
+  };
+  const recheck = btn("Check again", () => { watch.textContent = "Checking…"; frigateInfo(true).then(showWatch); });
   const test = btn("Test pop-up", async () => {
     if (!info?.source) return;
     const camera = cp.cameras[0] || info.cameras?.[0];
@@ -87,6 +98,7 @@ function cameraSection(o, set) {
   });
   frigateInfo().then((res) => {
     info = res;
+    showWatch(res);
     camsEl.innerHTML = "";
     if (!res.sources?.length) { camsEl.append(h("span", { class: "insp-hint", text: "Add a Frigate connection under Settings → Manage Integrations first." })); return; }
     if (res.ok === false || res.error) { camsEl.append(h("span", { class: "insp-hint insp-warn", text: `Frigate: ${res.error}` })); return; }
@@ -99,7 +111,7 @@ function cameraSection(o, set) {
     row("Cameras", camsEl, "None ticked = every camera."),
     row("Show for", h("div", { class: "insp-inline" }, num(cp.seconds, { min: 5, onChange: (v) => save("seconds", Math.max(5, v || 30)) }), h("span", { text: "s" }))),
     row("Then quiet for", h("div", { class: "insp-inline" }, num(cp.cooldown, { min: 0, onChange: (v) => save("cooldown", Math.max(0, v ?? 120)) }), h("span", { text: "s per camera" }))),
-    h("div", { class: "insp-btns" }, test), status);
+    h("div", { class: "insp-btns" }, test, recheck), status, watch);
 }
 
 export function createInspector(root, ctx) {

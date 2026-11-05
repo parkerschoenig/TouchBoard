@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 
 from . import db, secrets
 from .integrations import frigate
+
+log = logging.getLogger("touchboard.camera_alerts")
 
 _INTERVAL = 2.0      # seconds between checks
 _RETRY = 15.0        # wait after an error
@@ -37,8 +40,11 @@ class CameraWatcher:
         self._state.clear()
 
     def status(self, ds_id: int) -> dict:
+        """What the editor shows under Camera pop-ups."""
         st = self._state.get(ds_id)
-        return {"watching": bool(st), "error": st["error"] if st else None}
+        if not st:
+            return {"watching": False, "error": None, "last_event": None, "last_ok": None}
+        return {"watching": True, "error": st["error"], "last_event": st["last_event"], "last_ok": st["last_ok"]}
 
     async def _run(self) -> None:
         while True:
@@ -66,24 +72,44 @@ class CameraWatcher:
             if not st or st["sig"] != sig:
                 if st:
                     await st["client"].close()
-                # only detections that start after we begin watching
-                st = self._state[ds["id"]] = {"client": frigate.FrigateClient(ds), "sig": sig, "since": time.time() - 5,
-                                              "newest": 0.0, "seen": {}, "error": None, "retry_at": 0.0}
+                st = self._state[ds["id"]] = {"client": frigate.FrigateClient(ds), "sig": sig, "primed": False,
+                                              "floor": 0.0, "newest": 0.0, "seen": {}, "error": None, "retry_at": 0.0,
+                                              "last_event": None, "last_ok": None}
             if time.time() < st["retry_at"]:
                 continue
             try:
-                events = await st["client"].events_after(max(st["since"], st["newest"] - _OVERLAP))
-                st["error"] = None
+                # All times are Frigate's own, so the two machines' clocks never need to agree.
+                since = max(st["floor"], st["newest"] - _OVERLAP) if st["primed"] else 0
+                events = await st["client"].events_after(since)
+                if st["error"]:
+                    log.info("Frigate %s: reachable again", ds["name"])
+                st["error"], st["last_ok"] = None, time.time()
             except Exception as exc:
-                st["error"] = str(exc) or type(exc).__name__
+                msg = str(exc) or type(exc).__name__
+                if msg != st["error"]:
+                    log.warning("Frigate %s: %s", ds["name"], msg)
+                st["error"] = msg
                 st["retry_at"] = time.time() + _RETRY
+                continue
+            if not st["primed"]:
+                # First look: whatever Frigate already has is history. New means starting
+                # after Frigate's "now" (its Date header), or after its newest event.
+                starts = [float(e.get("start_time") or 0) for e in events]
+                now_frigate = st["client"].server_time
+                st["floor"] = (now_frigate - 5) if now_frigate else max(starts, default=0.0)
+                for e in events:
+                    if e.get("id"):
+                        st["seen"][e["id"]] = float(e.get("start_time") or 0)
+                st["newest"] = max([st["floor"], *starts])
+                st["primed"] = True
                 continue
             for ev in sorted(events, key=lambda e: e.get("start_time") or 0):
                 eid, start = ev.get("id"), float(ev.get("start_time") or 0)
-                if not eid or eid in st["seen"] or start < st["since"]:
+                if not eid or eid in st["seen"] or start < st["floor"]:
                     continue
                 st["seen"][eid] = start
                 st["newest"] = max(st["newest"], start)
+                st["last_event"] = {"camera": ev.get("camera"), "label": ev.get("label"), "at": time.time()}
                 poller._publish(frigate.event_payload(ds, ev))
             if len(st["seen"]) > 500:   # keep the id memory small
                 for k in sorted(st["seen"], key=st["seen"].get)[:250]:
