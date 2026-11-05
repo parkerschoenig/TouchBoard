@@ -343,7 +343,7 @@
     api.post('/api/widgets/:id/lights', async function (ctx) {
       var w = byId(state.widgets, ctx.params.id); if (!w || w.type !== 'lights') return notFound('widget');
       var b = ctx.body || {};
-      g.TouchBoardDemoData.lightsAct(b.entity_ids || [], b.action);
+      g.TouchBoardDemoData.lightsAct(b.entity_ids || [], b.action, b);
       return K.json(await poll(w));
     });
     api.get('/api/datasources/:id/ha-entities', auth(function () {

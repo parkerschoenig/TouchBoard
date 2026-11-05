@@ -357,10 +357,10 @@
 
   // Home Assistant lights: a few rooms, toggled in memory by /api/widgets/:id/lights
   var LIGHTS = [
-    { id: 'light.kitchen', name: 'Kitchen ceiling', area: 'Kitchen', on: true, brightness: 80, color: '#ffb46b' },
+    { id: 'light.kitchen', name: 'Kitchen ceiling', area: 'Kitchen', on: true, brightness: 80, color: '#ffb46b', temp: true, kelvin: 2700 },
     { id: 'light.kitchen_pendants', name: 'Kitchen pendants', area: 'Kitchen', on: false, brightness: 60, color: '#ffc98f' },
-    { id: 'light.living_lamp', name: 'Floor lamp', area: 'Living room', on: true, brightness: 50, color: '#7850ff' },
-    { id: 'light.tv_strip', name: 'TV light strip', area: 'Living room', on: false, brightness: 70, color: '#38bdf8' },
+    { id: 'light.living_lamp', name: 'Floor lamp', area: 'Living room', on: true, brightness: 50, color: '#7850ff', rgb: true, temp: true },
+    { id: 'light.tv_strip', name: 'TV light strip', area: 'Living room', on: false, brightness: 70, color: '#38bdf8', rgb: true },
     { id: 'light.office_desk', name: 'Desk lamp', area: 'Office', on: true, brightness: 100, color: '#fff1d6' },
     { id: 'light.porch', name: 'Porch', area: 'Outside', on: false },
     { id: 'switch.coffee', name: 'Coffee maker', area: 'Kitchen', on: false, domain: 'switch' },
@@ -368,7 +368,8 @@
   function lightItem(l) {
     var d = l.domain || 'light';
     return { id: l.id, name: l.name, domain: d, on: l.on, available: true, brightness: l.on && l.brightness ? l.brightness : null,
-      color: l.on && l.color ? l.color : null, dimmable: d === 'light', area: l.area, group: false };
+      color: l.on && l.color ? l.color : null, dimmable: d === 'light', area: l.area, group: false,
+      color_capable: !!l.rgb, temp_capable: !!l.temp, min_kelvin: 2000, max_kelvin: 6500, kelvin: l.on ? l.kelvin || null : null, hue: null };
   }
   function lights(w) {
     var cfg = w.config || {}, wanted = cfg.entities || [];
@@ -377,8 +378,16 @@
       : LIGHTS.filter(function (l) { return (l.domain || 'light') === 'light' || cfg.include_switches; });
     return { entities: pick.map(lightItem), missing: [] };
   }
-  function lightsAct(ids, action) {
-    LIGHTS.forEach(function (l) { if (ids.indexOf(l.id) > -1) l.on = action === 'toggle' ? !l.on : action === 'turn_on'; });
+  function lightsAct(ids, action, b) {
+    b = b || {};
+    LIGHTS.forEach(function (l) {
+      if (ids.indexOf(l.id) < 0) return;
+      l.on = action === 'toggle' ? !l.on : action === 'turn_on';
+      if (!l.on) return;
+      if (b.brightness != null) l.brightness = b.brightness;
+      if (b.rgb) l.color = '#' + b.rgb.map(function (c) { return ('0' + Number(c).toString(16)).slice(-2); }).join('');
+      if (b.kelvin != null) { l.kelvin = b.kelvin; l.color = b.kelvin < 3500 ? '#ffb46b' : b.kelvin < 5000 ? '#fff1d6' : '#dce9ff'; }
+    });
   }
 
   var REGISTRY = {
