@@ -1,6 +1,6 @@
 """REST + SSE routes."""
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -326,14 +326,48 @@ async def lights_action(widget_id: int, body: LightsActionIn, tb_session: str = 
     return await poller.poll_now(widget_id)
 
 
+class ControlIn(BaseModel):
+    action: str
+    value: Optional[Any] = None
+    low: Optional[float] = None
+    high: Optional[float] = None
+
+
+@router.post("/widgets/{widget_id}/control")
+async def widget_control(widget_id: int, body: ControlIn, tb_session: str = Cookie(default=None)):
+    """Thermostat and TV remote buttons on the display. Public like the display,
+    but only for that widget's own entity and only the actions it allows."""
+    w = db.get_widget(widget_id)
+    if not w or w["type"] not in ("thermostat", "tv"):
+        raise HTTPException(404, "widget not found")
+    if (w.get("config") or {}).get("require_login") and not (tb_session and db.get_user_by_session(tb_session)):
+        raise HTTPException(401, "Sign in to TouchBoard to use this card.")
+    ds = _with_source(w)
+    if not ds or ds.get("type") != "homeassistant":
+        raise HTTPException(400, "This card has no Home Assistant connection.")
+    state = ((poller.cache.get(widget_id) or {}).get("data") or {})
+    if not state or state.get("error"):
+        state = (await poller.poll_now(widget_id) or {}).get("data") or {}
+    try:
+        await ha_int.control(ds, w, state, body.action, body.value, body.low, body.high)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, str(exc) or type(exc).__name__)
+    poller.force_poll(widget_id)
+    return await poller.poll_now(widget_id)
+
+
 @router.get("/datasources/{ds_id}/ha-entities")
-async def ha_entities(ds_id: int, user: dict = Depends(current_user)):
-    """Lights and switches in Home Assistant, for the editor's picker."""
+async def ha_entities(ds_id: int, domains: str = "", user: dict = Depends(current_user)):
+    """Home Assistant entities for the editor's pickers: lights and switches, or
+    the domains asked for (?domains=climate or media_player,remote)."""
     ds = _with_source({"data_source_id": ds_id})
     if not ds or ds.get("type") != "homeassistant":
         raise HTTPException(404, "not a Home Assistant connection")
+    want = tuple(d for d in domains.split(",") if d in ("light", "switch", "climate", "media_player", "remote")) or ha_int.CONTROLLABLE
     try:
-        return {"ok": True, "entities": await ha_int.list_entities(ds)}
+        return {"ok": True, "entities": await ha_int.list_entities(ds, want)}
     except Exception as exc:
         return {"ok": False, "error": str(exc) or type(exc).__name__}
 

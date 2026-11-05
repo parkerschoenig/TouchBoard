@@ -73,7 +73,7 @@ const MULTIPAGE_TYPES = new Set(["proxmox", "truenas", "netbox", "weather"]);
 const DEFAULT_SIZE = {
   clock: [6, 4], weather: [6, 6], ping: [6, 6], stream: [8, 6], netbox: [6, 12], truenas: [6, 6],
   proxmox: [10, 10], adguard: [6, 6], opnsense: [8, 6], calendar: [8, 8], bookmarks: [6, 6],
-  rest: [6, 4], nowplaying: [8, 6], notes: [6, 6], photos: [8, 8], rss: [6, 8], lights: [8, 6],
+  rest: [6, 4], nowplaying: [8, 6], notes: [6, 6], photos: [8, 8], rss: [6, 8], lights: [8, 6], thermostat: [8, 6], tv: [8, 8],
 };
 function defaultSize(type) {
   const [w, h] = DEFAULT_SIZE[type] || [DEF_W, DEF_H];
@@ -240,13 +240,15 @@ const WIDGET_TYPES = [
   { type: "opnsense",   label: "OPNsense",        icon: "🔥" },
   { type: "calendar",   label: "Calendar",        icon: "📅" },
   { type: "lights",     label: "Lights",          icon: "💡" },
+  { type: "thermostat", label: "Thermostat",      icon: "🌡️" },
+  { type: "tv",         label: "TV remote",       icon: "📺" },
 ];
 
 const WIDGET_CATEGORIES = [
   { label: "Utilities",    types: ["clock", "weather", "notes", "bookmarks", "rest"],                   color: "#f59e0b" },
   { label: "Media",        types: ["photos", "rss", "stream", "nowplaying"],                            color: "#f472b6" },
   { label: "Ping",         types: ["ping"],                                                             color: "#a78bfa" },
-  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense", "calendar", "lights"], color: "#34d399" },
+  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense", "calendar", "lights", "thermostat", "tv"], color: "#34d399" },
 ];
 
 function typeColor(type) {
@@ -1237,6 +1239,83 @@ async function openWidgetModal(w = null, opts = {}) {
         max_items: Math.max(1, Number(maxInp.value) || 20), rotate_sec: Math.max(5, Number(rotInp.value) || 12),
         show_source: srcChk.checked, show_images: imgChk.checked, open: openSel.value });
 
+    } else if (t === "thermostat" || t === "tv") {
+      const chk = (on) => Object.assign(document.createElement("input"), { type: "checkbox", checked: on });
+      const mkSel = () => Object.assign(document.createElement("select"), { className: "sb-form-input" });
+      const fill = (selEl, items, value, none) => {
+        selEl.innerHTML = "";
+        selEl.appendChild(new Option(none, ""));
+        for (const it of items) selEl.appendChild(new Option(`${it.name}  (${it.id})`, it.id));
+        selEl.value = items.some((i) => i.id === value) ? value : "";
+      };
+      const msg = Object.assign(document.createElement("div"), { className: "settings-ds-hint", textContent: "Pick a Home Assistant connection below." });
+      const loginChk = chk(!!cfg.require_login);
+      let entities = [];
+      if (t === "thermostat") {
+        const entSel = mkSel();
+        const fanChk = chk(cfg.show_fan !== false);
+        cfgWrap.append(makeSbRow("Thermostat", entSel), msg, makeSbRow("Show fan buttons", fanChk), makeSbRow("Only signed-in users can change it", loginChk));
+        const load = async () => {
+          const dsId = Number(cfgWrap.querySelector("[data-ds-select]")?.value);
+          if (!dsId) { msg.textContent = "Pick a Home Assistant connection below, then the thermostat here."; return; }
+          msg.textContent = "Loading from Home Assistant…";
+          const r = await (await fetch(`/api/datasources/${dsId}/ha-entities?domains=climate`)).json().catch(() => ({ ok: false, error: "no response" }));
+          if (!r.ok) { msg.textContent = `Couldn't load: ${r.error}`; return; }
+          entities = r.entities;
+          fill(entSel, entities, cfg.entity || (entities.length === 1 ? entities[0].id : ""), entities.length ? "— pick a thermostat —" : "— no thermostats in Home Assistant —");
+          msg.textContent = entities.length ? "" : "Add your thermostat's integration in Home Assistant first (Honeywell Total Connect Comfort for a TH8732WFH).";
+        };
+        cfgWrap.addEventListener("change", (e) => { if (e.target.matches?.("[data-ds-select]")) load(); });
+        setTimeout(load, 0);
+        getConfig = () => ({ ...cfg, entity: entSel.value, show_fan: fanChk.checked, require_login: loginChk.checked });
+      } else {
+        const mpSel = mkSel(), rmSel = mkSel();
+        const favsEl = Object.assign(document.createElement("div"), { className: "lt-pick" });
+        const picked = new Set(cfg.favorites || []);
+        const drawFavs = () => {
+          favsEl.innerHTML = "";
+          const list = entities.find((x) => x.id === mpSel.value)?.source_list || [];
+          if (!list.length) { favsEl.appendChild(Object.assign(document.createElement("div"), { className: "lt-pick-msg", textContent: "Pick the TV to list its apps and inputs." })); return; }
+          for (const src of list) {
+            const row = document.createElement("label");
+            row.className = "lt-pick-row";
+            const box = chk(picked.has(src));
+            box.addEventListener("change", () => { box.checked ? picked.add(src) : picked.delete(src); });
+            row.append(box, Object.assign(document.createElement("span"), { textContent: src }));
+            favsEl.appendChild(row);
+          }
+        };
+        mpSel.addEventListener("change", () => {
+          const suffix = mpSel.value.split(".")[1];
+          const twin = entities.find((x) => x.id === `remote.${suffix}`);
+          if (twin && !rmSel.value) rmSel.value = twin.id;
+          drawFavs();
+        });
+        cfgWrap.append(makeSbRow("TV", mpSel), makeSbRow("Remote (for the arrows, OK, Back, Home)", rmSel), msg,
+          makeSbRow("Quick buttons (apps and inputs)", favsEl), makeSbRow("Only signed-in users can use it", loginChk));
+        const load = async () => {
+          const dsId = Number(cfgWrap.querySelector("[data-ds-select]")?.value);
+          if (!dsId) { msg.textContent = "Pick a Home Assistant connection below, then the TV here."; return; }
+          msg.textContent = "Loading from Home Assistant…";
+          const r = await (await fetch(`/api/datasources/${dsId}/ha-entities?domains=media_player,remote`)).json().catch(() => ({ ok: false, error: "no response" }));
+          if (!r.ok) { msg.textContent = `Couldn't load: ${r.error}`; return; }
+          entities = r.entities;
+          const mps = entities.filter((x) => x.domain === "media_player"), rms = entities.filter((x) => x.domain === "remote");
+          fill(mpSel, mps, cfg.media_player || (mps.length === 1 ? mps[0].id : ""), mps.length ? "— pick the TV —" : "— no TVs in Home Assistant —");
+          fill(rmSel, rms, cfg.remote || "", "— none (volume and power only) —");
+          if (!rmSel.value && mpSel.value) { const twin = rms.find((x) => x.id === `remote.${mpSel.value.split(".")[1]}`); if (twin) rmSel.value = twin.id; }
+          msg.textContent = mps.length ? "" : "Add the Roku integration in Home Assistant first.";
+          drawFavs();
+        };
+        cfgWrap.addEventListener("change", (e) => { if (e.target.matches?.("[data-ds-select]")) load(); });
+        setTimeout(load, 0);
+        getConfig = () => {
+          const order = entities.find((x) => x.id === mpSel.value)?.source_list || [];
+          return { ...cfg, media_player: mpSel.value, remote: rmSel.value,
+            favorites: [...order.filter((x) => picked.has(x)), ...[...picked].filter((x) => !order.includes(x))], require_login: loginChk.checked };
+        };
+      }
+
     } else if (t === "lights") {
       const chk = (on) => Object.assign(document.createElement("input"), { type: "checkbox", checked: on });
       const picked = new Set(cfg.entities || []);
@@ -1282,7 +1361,7 @@ async function openWidgetModal(w = null, opts = {}) {
     }
 
     // Integration picker for types that need (or can use) a data source
-    const intTypes = { netbox: ["netbox"], truenas: ["truenas"], proxmox: ["proxmox"], adguard: ["adguard"], opnsense: ["opnsense"], calendar: ["google_calendar"], nowplaying: ["plex", "jellyfin"], rest: ["rest"], lights: ["homeassistant"] };
+    const intTypes = { netbox: ["netbox"], truenas: ["truenas"], proxmox: ["proxmox"], adguard: ["adguard"], opnsense: ["opnsense"], calendar: ["google_calendar"], nowplaying: ["plex", "jellyfin"], rest: ["rest"], lights: ["homeassistant"], thermostat: ["homeassistant"], tv: ["homeassistant"] };
     if (intTypes[t]) {
       const intHead = Object.assign(document.createElement("div"), {
         className: "sb-form-label", textContent: "Integration",
@@ -1625,24 +1704,28 @@ async function openIntegrationWizard(preType = null, wopts = {}) {
     for (const [key, meta] of Object.entries(INTEGRATION_META)) {
       if (wopts.only && !wopts.only.includes(key)) continue;
       if (!wopts.only && meta.optional) continue;
-      const wt = WIDGET_TYPES.find(w => w.type === (meta.widgetType || key));
-      const tile = document.createElement("button");
-      tile.className = "wizard-type-tile";
-      tile.type = "button";
-      tile.style.setProperty("--tile-color", meta.color);
-      tile.innerHTML = `<span class="wzt-icon">${wt?.icon || "⚙️"}</span><span class="wzt-label">${meta.label}</span>`;
-      tile.addEventListener("click", () => showStep2(key));
-      grid.appendChild(tile);
+      for (const cardType of meta.widgetTypes || [meta.widgetType || key]) {
+        const wt = WIDGET_TYPES.find(w => w.type === cardType);
+        const tile = document.createElement("button");
+        tile.className = "wizard-type-tile";
+        tile.type = "button";
+        tile.style.setProperty("--tile-color", meta.color);
+        tile.innerHTML = `<span class="wzt-icon">${wt?.icon || "⚙️"}</span><span class="wzt-label"></span>`;
+        tile.querySelector(".wzt-label").textContent = meta.widgetTypes ? `${meta.label} · ${wt?.label || cardType}` : meta.label;
+        tile.addEventListener("click", () => showStep2(key, cardType));
+        grid.appendChild(tile);
+      }
     }
     body.appendChild(grid);
   }
 
-  async function showStep2(type) {
+  async function showStep2(type, cardType = null) {
     await sourcesReady;
     body.innerHTML = "";
     footer.innerHTML = "";
     const meta = INTEGRATION_META[type];
-    const wt   = WIDGET_TYPES.find(w => w.type === (meta.widgetType || type));
+    const widgetType = cardType || meta.widgetType || type;
+    const wt   = WIDGET_TYPES.find(w => w.type === widgetType);
     titleEl.textContent = `${wt?.icon || ""} ${meta.label}`;
 
     if (!preType || wopts.backTo) {
@@ -1654,7 +1737,7 @@ async function openIntegrationWizard(preType = null, wopts = {}) {
     }
 
     const nameInput = Object.assign(document.createElement("input"), {
-      className: "sb-form-input", placeholder: "Widget name", value: meta.label,
+      className: "sb-form-input", placeholder: "Widget name", value: meta.widgetTypes ? (wt?.label || meta.label) : meta.label,
     });
     body.appendChild(makeSbRow("Widget name", nameInput));
 
@@ -1783,7 +1866,7 @@ async function openIntegrationWizard(preType = null, wopts = {}) {
 
       saveBtn.textContent = "Creating widget…";
       try {
-        const created = await api.createWidget({ type: meta.widgetType || type, title, config: {}, refresh_interval_sec: meta.refresh || 15, data_source_id: dsId });
+        const created = await api.createWidget({ type: widgetType, title, config: {}, refresh_interval_sec: meta.refreshFor?.[widgetType] || meta.refresh || 15, data_source_id: dsId });
         widgets.push(created);
         reindex();
         dlg.close();
@@ -1801,7 +1884,7 @@ async function openIntegrationWizard(preType = null, wopts = {}) {
     footer.append(cancelBtn, saveBtn);
   }
 
-  if (preType) showStep2(preType);
+  if (preType) showStep2(preType, wopts.widgetType || null);
   else showStep1();
 }
 
@@ -2624,8 +2707,8 @@ function openQuickPick(rect, rectEl) {
 function createThenPlace(type, rect) {
   const onCreated = (w) => placeWidget(w.id, rect);
   if (type === "nowplaying") return openIntegrationWizard(null, { onCreated, only: ["plex", "jellyfin"] });
-  const integ = Object.entries(INTEGRATION_META).find(([, m]) => (m.widgetType || null) === type && !m.optional);
-  if (integ) return openIntegrationWizard(integ[0], { onCreated });
+  const integ = Object.entries(INTEGRATION_META).find(([, m]) => ((m.widgetType || null) === type || m.widgetTypes?.includes(type)) && !m.optional);
+  if (integ) return openIntegrationWizard(integ[0], { onCreated, widgetType: type });
   openWidgetModal(null, { defaultType: type, typeFilter: [type], onCreated });
 }
 
@@ -2980,6 +3063,7 @@ const INTEGRATION_META = {
   },
   homeassistant: {
     label: "Home Assistant", color: "#18bcf2", widgetType: "lights", configureAfter: true, refresh: 5,
+    widgetTypes: ["lights", "thermostat", "tv"], refreshFor: { thermostat: 30, tv: 10 },
     fields: [{ key: "token", label: "Long-lived access token", type: "password", placeholder: "Profile → Security → Long-lived access tokens" }],
     hint: "The token is encrypted on the server and never sent to the display.",
   },
@@ -3225,12 +3309,12 @@ async function openSettingsPanel(section) {
 
       // ＋ Card: a card that uses this connection, without going back through the wizard
       const cardType = meta.widgetType || (WIDGET_TYPES.some((w) => w.type === ds.type) ? ds.type : null);
-      const cardBtn = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "＋ Card" });
-      cardBtn.title = `Add a ${WIDGET_TYPES.find((w) => w.type === cardType)?.label || "widget"} card that uses this connection`;
-      cardBtn.addEventListener("click", async () => {
-        cardBtn.disabled = true;
+      const addCard = async (type, btnEl) => {
+        btnEl.disabled = true;
         try {
-          const created = await api.createWidget({ type: cardType, title: ds.name, config: {}, refresh_interval_sec: meta.refresh || 15, data_source_id: ds.id });
+          const label = WIDGET_TYPES.find((w) => w.type === type)?.label;
+          const created = await api.createWidget({ type, title: meta.widgetTypes ? (label || ds.name) : ds.name, config: {},
+            refresh_interval_sec: meta.refreshFor?.[type] || meta.refresh || 15, data_source_id: ds.id });
           widgets.push(created);
           reindex();
           renderWidgets();
@@ -3238,10 +3322,23 @@ async function openSettingsPanel(section) {
           if (meta.configureAfter) openWidgetModal(created);
           else toast(`Created ${created.title}. Drag it onto the board, or tap ＋ on it.`);
         } catch (e) {
-          cardBtn.disabled = false;
+          btnEl.disabled = false;
           toast(e.message || "Couldn't create the card.");
         }
-      });
+      };
+      let cardBtn;
+      if (meta.widgetTypes?.length > 1) {
+        // several kinds of card: a small menu
+        cardBtn = Object.assign(document.createElement("select"), { className: "small settings-ds-cardsel" });
+        cardBtn.appendChild(new Option("＋ Card…", ""));
+        for (const t of meta.widgetTypes) cardBtn.appendChild(new Option(WIDGET_TYPES.find((w) => w.type === t)?.label || t, t));
+        cardBtn.title = "Add a card that uses this connection";
+        cardBtn.addEventListener("change", () => { if (cardBtn.value) addCard(cardBtn.value, cardBtn); });
+      } else {
+        cardBtn = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "＋ Card" });
+        cardBtn.title = `Add a ${WIDGET_TYPES.find((w) => w.type === cardType)?.label || "widget"} card that uses this connection`;
+        cardBtn.addEventListener("click", () => addCard(cardType, cardBtn));
+      }
 
       cardHead.append(badge, dsName, ...(cardType ? [cardBtn] : []), editBtn, delBtn);
       card.append(cardHead, dsUrl, secretBadge);

@@ -22,6 +22,8 @@ REGISTRY = {
     "photos":     photos.fetch,
     "rss":        rss.fetch,
     "lights":     homeassistant.fetch,
+    "thermostat": homeassistant.fetch_thermostat,
+    "tv":         homeassistant.fetch_tv,
 }
 
 
