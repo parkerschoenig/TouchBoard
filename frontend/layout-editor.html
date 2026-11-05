@@ -8,17 +8,11 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16x16.png?v=1" />
   <link rel="icon" href="/static/img/favicon.ico?v=1" sizes="any" />
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png?v=1" />
-  <script>
-    // Apply the saved editor theme before first paint (see js/editor/app-theme.js).
-    try {
-      var p = JSON.parse(localStorage.getItem("tb_editor_prefs") || "{}");
-      var t = p.theme || (matchMedia("(pointer: coarse) and (hover: none)").matches ? "cockpit" : "studio");
-      document.documentElement.dataset.appTheme = t;
-    } catch (e) { document.documentElement.dataset.appTheme = "studio"; }
-  </script>
+  <script>document.documentElement.dataset.appTheme = "studio";</script>
   <link rel="stylesheet" href="/static/vendor/gridstack.min.css" />
   <link rel="stylesheet" href="/static/css/app.css" />
   <link rel="stylesheet" href="/static/css/v2.css" />
+  <link rel="stylesheet" href="/static/css/themes.css" />
   <link rel="stylesheet" href="/static/css/editor.css" />
 </head>
 <body class="layout-editor-page">
@@ -50,7 +44,7 @@
       <div class="topbar-dropdown" id="settings-dropdown">
         <button class="topbar-settings-btn topbar-dropdown-toggle" id="settings-menu-btn" data-tip="Settings">Settings <span class="dd-caret">▾</span></button>
         <div class="topbar-dropdown-menu hidden" id="settings-menu" role="menu">
-          <button class="topbar-menu-item" data-section="Editor">Editor theme &amp; modes</button>
+          <button class="topbar-menu-item" data-section="Editor">Editor preferences</button>
           <button class="topbar-menu-item" data-section="Notifications">Alerts &amp; notifications</button>
           <div class="topbar-menu-divider"></div>
           <button class="topbar-menu-item" data-section="Profiles">Manage Profiles</button>
@@ -125,18 +119,6 @@
     <!-- Inspector -->
     <aside class="ed-inspector" id="inspector" aria-label="Inspector"></aside>
   </div>
-
-  <!-- Cockpit dock (touch-first theme) -->
-  <nav class="ed-dock" id="ed-dock" aria-label="Quick actions">
-    <button type="button" data-act="add" class="pri"><b>＋</b>Add</button>
-    <button type="button" data-act="undo"><b>↶</b>Undo</button>
-    <button type="button" data-act="redo"><b>↷</b>Redo</button>
-    <button type="button" data-act="duplicate"><b>⧉</b>Duplicate</button>
-    <button type="button" data-act="stack"><b>≡</b>Stack</button>
-    <button type="button" data-act="fill"><b>⤢</b>Fill</button>
-    <button type="button" data-act="inspect"><b>☰</b>Settings</button>
-    <button type="button" data-act="display"><b>▶</b>Display</button>
-  </nav>
 
   <dialog id="widget-modal"></dialog>
   <dialog id="stack-modal"></dialog>

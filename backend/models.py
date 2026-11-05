@@ -119,6 +119,8 @@ class UserUpdate(BaseModel):
 class SettingsPatch(BaseModel):
     theme_style:         Optional[str] = None
     theme_font:          Optional[str] = None
+    theme_shape:         Optional[str] = None
+    theme_pattern:       Optional[str] = None
     card_bg_color:       Optional[str] = None
     card_bg_opacity:     Optional[str] = None
     card_gradient:       Optional[str] = None

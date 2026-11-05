@@ -1,14 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   TouchBoard editor — chrome themes (Studio, Daylight, Console, Cockpit) and
-   the Canvas + Inspector layout. Loaded after app.css and v2.css.
+   TouchBoard editor — the Studio chrome theme and the Canvas + Inspector
+   layout. Loaded after app.css and v2.css.
 
-   Themes only recolor the editor chrome. The board preview keeps the display
+   The theme only colors the editor chrome. The board preview keeps the display
    theme, so chrome containers get their own copy of the color tokens and the
    preview keeps the board's.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── theme tokens ─────────────────────────────────────────────────────────── */
-html[data-app-theme="studio"], html:not([data-app-theme]) {
+html {
   --ui-bg: #0f1114; --ui-panel: #16181c; --ui-panel-2: #1d2026; --ui-raised: #22262d;
   --ui-border: #262a31; --ui-border-strong: #353a44; --ui-text: #dfe3e8; --ui-muted: #868e99;
   --ui-accent: #4c8dff; --ui-accent-rgb: 76, 141, 255; --ui-on-accent: #fff; --ui-danger: #f87171;
@@ -16,35 +16,10 @@ html[data-app-theme="studio"], html:not([data-app-theme]) {
   --ui-desk: #0b0c0e; --ui-field: #111317; --ui-shadow: 0 12px 34px rgba(0,0,0,.5);
   --ui-size: 13px; --ui-hit: 30px; --ui-top: 48px; --ui-lib: 300px; --ui-insp: 300px;
 }
-html[data-app-theme="daylight"] {
-  --ui-bg: #eceef1; --ui-panel: #ffffff; --ui-panel-2: #f4f5f7; --ui-raised: #ffffff;
-  --ui-border: #dfe2e7; --ui-border-strong: #c9ced6; --ui-text: #1c2027; --ui-muted: #5f6774;
-  --ui-accent: #2f5bea; --ui-accent-rgb: 47, 91, 234; --ui-on-accent: #fff; --ui-danger: #c62828;
-  --ui-radius: 8px; --ui-radius-lg: 12px; --ui-font: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --ui-desk: #dcdfe4; --ui-field: #ffffff; --ui-shadow: 0 14px 36px rgba(20,30,50,.16);
-  --ui-size: 13.5px; --ui-hit: 32px; --ui-top: 52px; --ui-lib: 300px; --ui-insp: 310px;
-  color-scheme: light;
-}
-html[data-app-theme="console"] {
-  --ui-bg: #0b0b0a; --ui-panel: #11110f; --ui-panel-2: #171713; --ui-raised: #1b1a16;
-  --ui-border: #2f2d27; --ui-border-strong: #47443b; --ui-text: #e6e0cf; --ui-muted: #8d877a;
-  --ui-accent: #ffb000; --ui-accent-rgb: 255, 176, 0; --ui-on-accent: #120c00; --ui-danger: #ff6b5b;
-  --ui-radius: 0px; --ui-radius-lg: 0px; --ui-font: "IBM Plex Mono", ui-monospace, Consolas, monospace;
-  --ui-desk: #090908; --ui-field: #0b0b0a; --ui-shadow: 0 0 0 1px #2f2d27, 0 16px 40px rgba(0,0,0,.6);
-  --ui-size: 12.5px; --ui-hit: 28px; --ui-top: 44px; --ui-lib: 290px; --ui-insp: 300px;
-}
-html[data-app-theme="cockpit"] {
-  --ui-bg: #0d1016; --ui-panel: #161a22; --ui-panel-2: #1c212b; --ui-raised: #222834;
-  --ui-border: #262c37; --ui-border-strong: #364051; --ui-text: #e8ecf2; --ui-muted: #8892a2;
-  --ui-accent: #2dd4bf; --ui-accent-rgb: 45, 212, 191; --ui-on-accent: #042b26; --ui-danger: #f87171;
-  --ui-radius: 14px; --ui-radius-lg: 20px; --ui-font: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --ui-desk: #0b0d12; --ui-field: #10141b; --ui-shadow: 0 16px 44px rgba(0,0,0,.55);
-  --ui-size: 15px; --ui-hit: 46px; --ui-top: 60px; --ui-lib: 0px; --ui-insp: 0px;
-}
 
 /* chrome containers get chrome tokens */
 body.layout-editor-page :is(.topbar, .ed-library, .ed-inspector, .page-tabs-bar, .ed-statusbar, .ed-float, .ed-menu,
-  .ed-toast, .ed-cmdk, .ed-quickpick, .ed-dock, .topbar-dropdown-menu, #widget-modal, #stack-modal, #settings-modal, .wc-popover-wrap),
+  .ed-toast, .ed-cmdk, .ed-quickpick, .topbar-dropdown-menu, #widget-modal, #stack-modal, #settings-modal, .wc-popover-wrap),
 body.layout-editor-page .g-tooltip {
   --bg: var(--ui-bg); --panel: var(--ui-panel); --panel-2: var(--ui-panel-2); --border: var(--ui-border);
   --text: var(--ui-text); --muted: var(--ui-muted); --accent: var(--ui-accent); --accent-rgb: var(--ui-accent-rgb);
@@ -150,8 +125,7 @@ body.layout-editor-page .layout-editor-body {
   position: relative; padding: 18px 24px; align-items: stretch;
   background-color: var(--ui-desk); background-image: none;
 }
-html[data-app-theme="studio"] body.layout-editor-page .layout-editor-body,
-html[data-app-theme="cockpit"] body.layout-editor-page .layout-editor-body {
+body.layout-editor-page .layout-editor-body {
   background-image: radial-gradient(rgba(255,255,255,.035) 1px, transparent 1.2px); background-size: 18px 18px;
 }
 body.layout-editor-page .preview-area { margin: auto; align-items: flex-start; gap: 10px; }
@@ -172,7 +146,6 @@ body.layout-editor-page .preview-viewport {
   border: 1px solid var(--ui-border-strong); border-radius: 4px; box-shadow: 0 18px 50px rgba(0,0,0,.4);
   color: var(--text); overflow: hidden;
 }
-html[data-app-theme="daylight"] body.layout-editor-page .preview-viewport { box-shadow: 0 18px 44px rgba(20,30,50,.24), 0 2px 6px rgba(20,30,50,.14); }
 .ed-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .ed-stage > .grid-stack { height: 100% !important; min-height: 0; }
 .layout-editor-page .grid-stack {
@@ -301,7 +274,6 @@ body.is-dragging .ed-float { display: none; }
   animation: tb-fade .15s ease-out;
 }
 .ed-toast button { background: transparent; border: 1px solid var(--ui-border-strong); color: var(--ui-accent); font-weight: 700; padding: 4px 10px; border-radius: var(--ui-radius); }
-html[data-app-theme="cockpit"] .ed-toast { bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
 
 /* ── inspector ───────────────────────────────────────────────────────────── */
 .ed-inspector {
@@ -386,7 +358,6 @@ dialog.ed-cmdk::backdrop { background: rgba(0,0,0,.45); }
   background: var(--ui-raised); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-lg); box-shadow: var(--ui-shadow);
   display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: 70vh; overflow: hidden; color: var(--ui-text);
 }
-html[data-app-theme="console"] .ed-cmdk-box { border-color: var(--ui-accent); }
 .ed-cmdk-input { height: 52px; padding: 0 18px; font-size: 16px; border: 0; border-bottom: 1px solid var(--ui-border); border-radius: 0; background: transparent; color: var(--ui-text); }
 .ed-cmdk-input:focus { outline: none; }
 .ed-cmdk-list { overflow: auto; padding: 6px; }
@@ -446,19 +417,6 @@ body.layout-editor-page .settings-section-head { color: var(--ui-text); }
 .wm-json-val:hover { background: color-mix(in srgb, var(--ui-accent) 22%, transparent); }
 
 /* editor preferences + starter layouts + designer gallery */
-.ed-theme-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
-.ed-theme-card {
-  display: grid; gap: 4px; text-align: left; padding: 12px; border-radius: 12px; cursor: pointer;
-  background: var(--ui-panel-2); border: 2px solid var(--ui-border); color: var(--ui-text);
-}
-.ed-theme-card.active { border-color: var(--ui-accent); }
-.ed-theme-card small { color: var(--ui-muted); font-size: 12px; line-height: 1.35; }
-.ed-theme-swatch { display: grid; grid-template-columns: 1fr 3fr 1fr; gap: 3px; height: 54px; padding: 4px; border-radius: 8px; margin-bottom: 6px; }
-.ed-theme-swatch i { border-radius: 3px; }
-.t-studio .ed-theme-swatch { background: #0f1114; } .t-studio .ed-theme-swatch i { background: #1d2026; } .t-studio .ed-theme-swatch i:nth-child(2) { background: #0b0c0e; box-shadow: inset 0 0 0 1px #4c8dff; }
-.t-daylight .ed-theme-swatch { background: #eceef1; } .t-daylight .ed-theme-swatch i { background: #fff; } .t-daylight .ed-theme-swatch i:nth-child(2) { background: #1a2029; box-shadow: 0 4px 10px rgba(0,0,0,.2); }
-.t-console .ed-theme-swatch { background: #0b0b0a; border-radius: 0; } .t-console .ed-theme-swatch i { background: #171713; border: 1px dashed #47443b; border-radius: 0; } .t-console .ed-theme-swatch i:nth-child(2) { border-color: #ffb000; }
-.t-cockpit .ed-theme-swatch { background: #0d1016; grid-template-columns: 1fr; grid-template-rows: 1fr 14px; } .t-cockpit .ed-theme-swatch i { background: #1c212b; border-radius: 6px; } .t-cockpit .ed-theme-swatch i:nth-child(2) { background: #2dd4bf; } .t-cockpit .ed-theme-swatch i:nth-child(3) { display: none; }
 .ed-pref-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--ui-border); cursor: pointer; }
 .ed-pref-row input { width: auto; margin-top: 3px; accent-color: var(--ui-accent); }
 .ed-pref-row span { display: grid; gap: 2px; }
@@ -475,81 +433,15 @@ body.layout-editor-page .settings-section-head { color: var(--ui-text); }
 .ds-gallery-card small { color: var(--ui-muted); font-size: 11.5px; line-height: 1.35; }
 .ds-thumb { position: relative; overflow: hidden; border-radius: 6px; background: #060912; }
 .ds-thumb-board { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: grid; padding: 5px; gap: 10px; pointer-events: none; }
-.ds-thumb-board .stack-cell { background: var(--panel); border: 1px solid var(--border); }
-
-/* ── Cockpit: touch-first ────────────────────────────────────────────────── */
-.ed-dock { display: none; }
-html[data-app-theme="cockpit"] .ed-dock {
-  display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 10px max(12px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
-  background: var(--ui-panel); border-top: 1px solid var(--ui-border); flex-shrink: 0;
-}
-.ed-dock button {
-  display: grid; place-items: center; gap: 2px; min-width: 82px; height: 62px; padding: 0 10px;
-  background: var(--ui-field); border: 1px solid var(--ui-border); border-radius: 16px; color: var(--ui-muted); font-size: 12px; font-weight: 600;
-}
-.ed-dock button b { font-size: 21px; color: var(--ui-text); font-weight: 600; line-height: 1; }
-.ed-dock button.pri { background: var(--ui-accent); border-color: var(--ui-accent); color: var(--ui-on-accent); }
-.ed-dock button.pri b { color: var(--ui-on-accent); }
-html[data-app-theme="cockpit"] .ed-library { display: none; }
-html[data-app-theme="cockpit"] .ed-inspector {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; width: auto; max-height: 62vh;
-  border: 0; border-top: 1px solid var(--ui-border); border-radius: 22px 22px 0 0; box-shadow: 0 -20px 50px rgba(0,0,0,.55);
-  transform: translateY(105%); transition: transform .22s ease; padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
-}
-html[data-app-theme="cockpit"] body.sheet-open .ed-inspector { transform: none; }
-html[data-app-theme="cockpit"] .ed-inspector::before { content: ""; display: block; width: 44px; height: 5px; border-radius: 3px; background: var(--ui-border-strong); margin: 8px auto 2px; }
-html[data-app-theme="cockpit"] .insp-sec { padding: 14px 18px; }
-html[data-app-theme="cockpit"] .page-tab { padding: 0 16px; border-radius: 999px; }
-html[data-app-theme="cockpit"] .page-tab-add { border-radius: 999px; }
-html[data-app-theme="cockpit"] .ed-float button { padding: 0 16px; font-size: 14px; border-radius: 999px; }
-html[data-app-theme="cockpit"] .ed-float { border-radius: 999px; }
-html[data-app-theme="cockpit"] .layout-editor-page .grid-stack-item > :is(.ui-resizable-se, .ui-resizable-sw, .ui-resizable-ne, .ui-resizable-nw) { width: 34px !important; height: 34px !important; }
-html[data-app-theme="cockpit"] .layout-editor-page .grid-stack-item > .ui-resizable-n, html[data-app-theme="cockpit"] .layout-editor-page .grid-stack-item > .ui-resizable-s { height: 18px !important; width: 110px !important; margin-left: -55px !important; }
-html[data-app-theme="cockpit"] .layout-editor-page .grid-stack-item > .ui-resizable-e, html[data-app-theme="cockpit"] .layout-editor-page .grid-stack-item > .ui-resizable-w { width: 18px !important; height: 110px !important; margin-top: -55px !important; }
-html[data-app-theme="cockpit"] .ed-screen select { max-width: 180px; }
-html[data-app-theme="cockpit"] .topbar-user, html[data-app-theme="cockpit"] .ed-cmdk-btn span { display: none; }
-html[data-app-theme="cockpit"] .ed-cmdk-btn { min-width: 0; }
-
-/* ── Console: keyboard-first, monospace ──────────────────────────────────── */
-html[data-app-theme="console"] body.layout-editor-page :is(.topbar, .ed-library, .ed-inspector) { border-style: dashed; }
-html[data-app-theme="console"] .insp-sec, html[data-app-theme="console"] .insp-head { border-bottom-style: dashed; }
-html[data-app-theme="console"] .insp-h::before { content: "// "; }
-html[data-app-theme="console"] .ed-cmdk-btn { border-color: var(--ui-accent); color: var(--ui-accent); }
-html[data-app-theme="console"] .ed-cmdk-btn span::before { content: "> "; }
-html[data-app-theme="console"] .insp-switch, html[data-app-theme="console"] .insp-switch::after { border-radius: 0; }
-html[data-app-theme="console"] .sb-widget-item { border-left-style: solid; }
-html[data-app-theme="console"] .topbar h1 span:first-of-type::before { content: "▍"; color: var(--ui-accent); }
-
-/* ── Daylight: fix hard-coded dark chrome from app.css ───────────────────── */
-html[data-app-theme="daylight"] body.layout-editor-page .sb-toggle:hover,
-html[data-app-theme="daylight"] body.layout-editor-page .sb-cat-header:hover .sb-cat-label { color: var(--ui-text); }
-html[data-app-theme="daylight"] body.layout-editor-page :is(.stack-widget-row, .pt-group-row, .wm-ping-picker, .pp-group, .ep-chips .stack-widget-row) { background: var(--ui-panel-2); border-color: var(--ui-border); }
-html[data-app-theme="daylight"] body.layout-editor-page :is(.sw-label, .pt-group-row-name, .ping-targets-table td, .view-order-label, .settings-ds-name) { color: var(--ui-text); }
-html[data-app-theme="daylight"] body.layout-editor-page :is(.sw-arrow, .pp-chip, .pp-select-all-btn, .sb-add-target) { border-color: var(--ui-border-strong); color: var(--ui-muted); }
-html[data-app-theme="daylight"] body.layout-editor-page .pp-chip.pp-chip-selected { background: color-mix(in srgb, var(--ui-accent) 14%, #fff); color: var(--ui-accent); border-color: var(--ui-accent); }
-html[data-app-theme="daylight"] body.layout-editor-page :is(.settings-ds-card, .settings-add-btn, .settings-add-form, .settings-edit-panel, .view-order-row) { background: var(--ui-panel-2); border-color: var(--ui-border); color: var(--ui-text); }
-html[data-app-theme="daylight"] body.layout-editor-page .ping-targets-table td { border-bottom-color: var(--ui-border); }
-html[data-app-theme="daylight"] body.layout-editor-page #settings-modal.designer-modal { background: var(--ui-panel); }
-html[data-app-theme="daylight"] body.layout-editor-page :is(.designer-controls-pane, .ds-section) { background: transparent; color: var(--ui-text); }
-html[data-app-theme="daylight"] body.layout-editor-page :is(.ds-section-label, .ds-row-label, .ds-slider-val, .ds-scale-label) { color: var(--ui-muted); }
-html[data-app-theme="daylight"] body.layout-editor-page :is(.ds-theme-btn, .ds-style-btn, .ds-preset-btn, .ds-font-select, .ds-preset-name-input) { background: var(--ui-panel-2); border-color: var(--ui-border); color: var(--ui-text); }
-html[data-app-theme="daylight"] body.layout-editor-page .ds-font-select option { background: #fff; color: var(--ui-text); }
-html[data-app-theme="daylight"] body.layout-editor-page .ds-gallery-card { background: var(--ui-panel-2); border-color: var(--ui-border); }
-html[data-app-theme="daylight"] body.layout-editor-page .designer-preview-pane { background: #e2e5ea; }
-html[data-app-theme="daylight"] body.layout-editor-page .wc-popover { background: #fff; color: var(--ui-text); border-color: var(--ui-border); }
-html[data-app-theme="daylight"] body.layout-editor-page .g-tooltip { background: #1c2027; color: #fff; }
-html[data-app-theme="daylight"] body.layout-editor-page .palette-drop-zone { border-color: var(--ui-border-strong); color: var(--ui-muted); }
-html[data-app-theme="daylight"] body.layout-editor-page .layout-editor-page .grid-stack { background-image: radial-gradient(circle, rgba(255,255,255,.16) 2px, transparent 2.4px); }
 
 /* narrow windows: tuck the panels away */
 @media (max-width: 1100px) {
-  html:not([data-app-theme="cockpit"]) { --ui-lib: 240px; --ui-insp: 260px; }
+  html { --ui-lib: 240px; --ui-insp: 260px; }
   .ed-screen select { max-width: 150px; }
 }
 @media (max-width: 860px) {
-  html:not([data-app-theme="cockpit"]) .ed-inspector { position: fixed; right: 0; top: var(--ui-top); bottom: 0; z-index: 50; box-shadow: var(--ui-shadow); transform: translateX(105%); transition: transform .2s; }
-  html:not([data-app-theme="cockpit"]) body.has-selection .ed-inspector { transform: none; }
+  html .ed-inspector { position: fixed; right: 0; top: var(--ui-top); bottom: 0; z-index: 50; box-shadow: var(--ui-shadow); transform: translateX(105%); transition: transform .2s; }
+  html body.has-selection .ed-inspector { transform: none; }
 }
 
 /* ── login page uses the editor theme ─────────────────────────────────────── */
@@ -563,17 +455,7 @@ html[data-app-theme] body.login-page .login-field input { background: var(--ui-f
 html[data-app-theme] body.login-page .login-btn { background: var(--ui-accent); color: var(--ui-on-accent); border-radius: var(--ui-radius); }
 
 /* ── fixes from review ────────────────────────────────────────────────────── */
-html[data-app-theme="daylight"] .topbar-logo-img { filter: invert(1) brightness(.25); }
 /* card name label: only for stacked cards, where it differs from the widget's own title */
 .layout-editor-page .layout-stack-card:not(.is-multi) .layout-drag-handle { display: none; }
 .layout-editor-page .layout-stack-card.is-multi .layout-drag-handle { left: auto; right: 8px; }
 /* Cockpit: a centered sheet above the dock, and a plain "Search" button */
-html[data-app-theme="cockpit"] .ed-inspector {
-  left: 50%; right: auto; width: min(760px, 100vw); bottom: calc(84px + env(safe-area-inset-bottom, 0px));
-  transform: translate(-50%, 115%); border-radius: 22px; border: 1px solid var(--ui-border);
-}
-html[data-app-theme="cockpit"] body.sheet-open .ed-inspector { transform: translate(-50%, 0); }
-html[data-app-theme="cockpit"] .ed-dock { position: relative; z-index: 70; }
-html[data-app-theme="cockpit"] .ed-cmdk-btn kbd { display: none; }
-html[data-app-theme="cockpit"] .ed-cmdk-btn::before { content: "Search"; }
-html[data-app-theme="cockpit"] .insp-grid4 { max-width: 420px; }
