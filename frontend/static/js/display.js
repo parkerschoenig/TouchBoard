@@ -75,11 +75,14 @@ function showIndicator() {
   const page = pages[currentPageIdx];
   piNameEl.textContent = page?.name || "";
   piDotsEl.innerHTML = "";
-  pages.forEach((_, i) => {
+  pages.forEach((p, i) => {
     const d = document.createElement("span");
     d.className = "pi-dot" + (i === currentPageIdx ? " active" : "");
+    d.dataset.page = String(i);
+    d.title = p?.name || `Page ${i + 1}`;
     piDotsEl.appendChild(d);
   });
+  indicatorEl.setAttribute("aria-label", `${page?.name || "Page"} (${currentPageIdx + 1} of ${pages.length}). Tap for next page`);
   indicatorEl.classList.add("visible");
 }
 
@@ -368,6 +371,20 @@ function setupNavigation() {
     lastInteraction = now();
     goToPage(e.deltaY > 0 ? currentPageIdx + 1 : currentPageIdx - 1);
   }, { passive: false });
+  // Tap the switcher for the next page (wrapping), or a dot to jump to that page.
+  indicatorEl.addEventListener("click", (e) => {
+    if (editing || pages.length <= 1) return;
+    e.stopPropagation();
+    lastInteraction = now();
+    const dot = e.target.closest(".pi-dot");
+    const target = dot ? Number(dot.dataset.page) : (currentPageIdx + 1) % pages.length;
+    if (target !== currentPageIdx) goToPage(target);
+  });
+  indicatorEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    indicatorEl.click();
+  });
 
   let sx = null, sy = null;
   document.addEventListener("touchstart", (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; lastInteraction = now(); }, { passive: true });

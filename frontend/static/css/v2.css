@@ -61,6 +61,14 @@
 .stack-cell.is-stale .stale-badge { opacity: 1; }
 .stack-cell.is-stale .display-widget-body { opacity: .45; filter: grayscale(.6); transition: opacity .4s, filter .4s; }
 
+/* page switcher: above the cards (patterns and theme overlays raise parts of a
+   card to z-index 1-20), below night dim (40) and the offline pill (50). */
+.page-indicator { z-index: 35; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.page-indicator:not(.visible) { pointer-events: none; }
+.page-indicator .pi-dots { padding: 4px 0; }
+.page-indicator .pi-dot { position: relative; }
+.page-indicator .pi-dot::after { content: ""; position: absolute; inset: -6px -4px; }
+
 /* offline pill, night dim, toasts */
 .display-offline {
   position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); z-index: 50;
