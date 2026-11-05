@@ -355,7 +355,34 @@
     return { items: items.slice(0, Number((w.config || {}).max_items) || 20), feed_errors: [] };
   }
 
+  // Home Assistant lights: a few rooms, toggled in memory by /api/widgets/:id/lights
+  var LIGHTS = [
+    { id: 'light.kitchen', name: 'Kitchen ceiling', area: 'Kitchen', on: true, brightness: 80, color: '#ffb46b' },
+    { id: 'light.kitchen_pendants', name: 'Kitchen pendants', area: 'Kitchen', on: false, brightness: 60, color: '#ffc98f' },
+    { id: 'light.living_lamp', name: 'Floor lamp', area: 'Living room', on: true, brightness: 50, color: '#7850ff' },
+    { id: 'light.tv_strip', name: 'TV light strip', area: 'Living room', on: false, brightness: 70, color: '#38bdf8' },
+    { id: 'light.office_desk', name: 'Desk lamp', area: 'Office', on: true, brightness: 100, color: '#fff1d6' },
+    { id: 'light.porch', name: 'Porch', area: 'Outside', on: false },
+    { id: 'switch.coffee', name: 'Coffee maker', area: 'Kitchen', on: false, domain: 'switch' },
+  ];
+  function lightItem(l) {
+    var d = l.domain || 'light';
+    return { id: l.id, name: l.name, domain: d, on: l.on, available: true, brightness: l.on && l.brightness ? l.brightness : null,
+      color: l.on && l.color ? l.color : null, dimmable: d === 'light', area: l.area, group: false };
+  }
+  function lights(w) {
+    var cfg = w.config || {}, wanted = cfg.entities || [];
+    var pick = wanted.length
+      ? wanted.map(function (id) { return LIGHTS.find(function (l) { return l.id === id; }); }).filter(Boolean)
+      : LIGHTS.filter(function (l) { return (l.domain || 'light') === 'light' || cfg.include_switches; });
+    return { entities: pick.map(lightItem), missing: [] };
+  }
+  function lightsAct(ids, action) {
+    LIGHTS.forEach(function (l) { if (ids.indexOf(l.id) > -1) l.on = action === 'toggle' ? !l.on : action === 'turn_on'; });
+  }
+
   var REGISTRY = {
+    lights: lights,
     bookmarks: bookmarks, rest: rest, nowplaying: nowplaying, photos: photos, rss: rss,
     notes: function () { return { static: true }; },
     clock: function () { return {}; },
@@ -363,7 +390,7 @@
     proxmox: proxmox, truenas: truenas, netbox: netbox, adguard: adguard, opnsense: opnsense,
     ping: ping, calendar: calendar, weather: weather,
   };
-  var NEEDS_SOURCE = { proxmox: 'Proxmox', truenas: 'TrueNAS', netbox: 'NetBox', adguard: 'AdGuard', opnsense: 'OPNsense', calendar: 'Google Calendar' };
+  var NEEDS_SOURCE = { proxmox: 'Proxmox', truenas: 'TrueNAS', netbox: 'NetBox', adguard: 'AdGuard', opnsense: 'OPNsense', calendar: 'Google Calendar', lights: 'Home Assistant' };
 
   async function generate(widget, ctx) {
     var fn = REGISTRY[widget.type];
@@ -374,5 +401,5 @@
     try { return await fn(widget, ctx); } catch (e) { return { error: String(e && e.message || e) }; }
   }
 
-  g.TouchBoardDemoData = { generate: generate };
+  g.TouchBoardDemoData = { generate: generate, lightsAct: lightsAct, lightList: function () { return LIGHTS.map(lightItem); } };
 })(window);

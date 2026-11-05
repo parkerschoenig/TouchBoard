@@ -340,6 +340,15 @@
     api.get('/api/widgets/:id/favicon/:i', function () { return K.json({ detail: 'no icon' }, 404); });
     api.get('/api/widgets/:id/art/:i', function () { return K.json({ detail: 'no art' }, 404); });
     api.get('/api/widgets/:id/photo/:i', function () { return K.json({ detail: 'not in the demo' }, 404); });
+    api.post('/api/widgets/:id/lights', async function (ctx) {
+      var w = byId(state.widgets, ctx.params.id); if (!w || w.type !== 'lights') return notFound('widget');
+      var b = ctx.body || {};
+      g.TouchBoardDemoData.lightsAct(b.entity_ids || [], b.action);
+      return K.json(await poll(w));
+    });
+    api.get('/api/datasources/:id/ha-entities', auth(function () {
+      return K.json({ ok: true, entities: g.TouchBoardDemoData.lightList() });
+    }));
     api.post('/api/rest/preview', auth(function (ctx) {
       var b = ctx.body || {};
       if (!b.url) return K.json({ ok: false, error: 'Set a full URL (http://…), or pick a REST data source and use a relative path.' });
