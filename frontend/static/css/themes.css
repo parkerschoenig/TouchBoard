@@ -228,6 +228,8 @@
 [data-style="paper"] .rest-stat { background: transparent; border-left: 1px solid rgba(0,0,0,.25); border-radius: 0; }
 [data-style="paper"] .np-art { background: #cfcfca; }
 [data-style="paper"] .page-indicator, [data-style="signal"] .page-indicator { background: rgba(255,255,255,.85); border-color: rgba(0,0,0,.2); }
+:is([data-style="paper"], [data-style="signal"]) .pi-dot { background: rgba(0,0,0,.22); }
+:is([data-style="paper"], [data-style="signal"]) .pi-dot.active { background: #1b1b1b; }
 
 /* ══ CARD SHAPES — override the theme's own ════════════════════════════════ */
 [data-shape="soft"] :is(.stack-cell, .layout-stack-card) { border-radius: 12px !important; clip-path: none !important; -webkit-mask: none !important; mask: none !important; }
