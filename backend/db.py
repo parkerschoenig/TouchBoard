@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS profile (
   layout     TEXT NOT NULL DEFAULT '[]',
   disp_w     INTEGER NOT NULL DEFAULT 1920,
   disp_h     INTEGER NOT NULL DEFAULT 720,
+  rows       INTEGER NOT NULL DEFAULT 16,
+  options    TEXT NOT NULL DEFAULT '{}',
   is_active  INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
@@ -94,6 +96,13 @@ def _ensure_profile_columns(conn: sqlite3.Connection) -> None:
         cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if "profile_id" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN profile_id INTEGER REFERENCES profile(id) ON DELETE CASCADE")
+    # v2: per-profile grid rows and display options (rotation, night mode, alerts, ...)
+    if _table_exists(conn, "profile"):
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(profile)").fetchall()}
+        if "rows" not in cols:
+            conn.execute("ALTER TABLE profile ADD COLUMN rows INTEGER NOT NULL DEFAULT 16")
+        if "options" not in cols:
+            conn.execute("ALTER TABLE profile ADD COLUMN options TEXT NOT NULL DEFAULT '{}'")
 
 
 def _migrate_board_to_profile(conn: sqlite3.Connection) -> None:
@@ -142,7 +151,7 @@ def init_db() -> None:
         if conn.execute("SELECT 1 FROM profile LIMIT 1").fetchone() is None:
             conn.execute(
                 "INSERT INTO profile (name, columns, layout, disp_w, disp_h, is_active, created_at)"
-                " VALUES ('Default', 6, '[]', 1920, 720, 1, ?)",
+                " VALUES ('Default', 24, '[]', 1920, 720, 1, ?)",
                 (_now(),),
             )
         # Seed default admin account
@@ -174,6 +183,10 @@ def init_db() -> None:
             ("board_bg_color",       "#060912"),
             ("onboarding_done",      "false"),
             ("tips_enabled",         "true"),
+            ("notify_ntfy_url",      ""),
+            ("notify_webhook_url",   ""),
+            ("notify_min_level",     "crit"),
+            ("notify_cooldown_min",  "15"),
         ]
         for key, value in defaults:
             conn.execute("INSERT OR IGNORE INTO setting (key, value) VALUES (?, ?)", (key, value))
@@ -398,6 +411,14 @@ def _parse_pages(raw: str) -> list[dict]:
     return data
 
 
+def _parse_options(raw: str | None) -> dict:
+    try:
+        data = json.loads(raw or "{}")
+        return data if isinstance(data, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
 def _profile_to_dict(r: sqlite3.Row) -> dict:
     return {
         "id": r["id"],
@@ -405,6 +426,8 @@ def _profile_to_dict(r: sqlite3.Row) -> dict:
         "columns": r["columns"],
         "disp_w": r["disp_w"],
         "disp_h": r["disp_h"],
+        "rows": r["rows"] if "rows" in r.keys() else 16,
+        "options": _parse_options(r["options"] if "options" in r.keys() else "{}"),
         "is_active": bool(r["is_active"]),
         "created_at": r["created_at"],
     }
@@ -458,9 +481,9 @@ def create_profile(name: str, clone_from: int | None = None) -> dict:
             if not src:
                 raise ValueError("source profile not found")
             cur = conn.execute(
-                "INSERT INTO profile (name, columns, layout, disp_w, disp_h, is_active, created_at)"
-                " VALUES (?, ?, '[]', ?, ?, 0, ?)",
-                (name, src["columns"], src["disp_w"], src["disp_h"], now),
+                "INSERT INTO profile (name, columns, layout, disp_w, disp_h, rows, options, is_active, created_at)"
+                " VALUES (?, ?, '[]', ?, ?, ?, ?, 0, ?)",
+                (name, src["columns"], src["disp_w"], src["disp_h"], src["rows"], src["options"], now),
             )
             new_id = cur.lastrowid
 
@@ -491,7 +514,7 @@ def create_profile(name: str, clone_from: int | None = None) -> dict:
         else:
             cur = conn.execute(
                 "INSERT INTO profile (name, columns, layout, disp_w, disp_h, is_active, created_at)"
-                " VALUES (?, 6, '[]', 1920, 720, 0, ?)",
+                " VALUES (?, 24, '[]', 1920, 720, 0, ?)",
                 (name, now),
             )
             new_id = cur.lastrowid
@@ -519,11 +542,15 @@ def update_profile_board(profile_id: int, data: dict) -> dict | None:
     pages   = data.get("pages",   current["pages"])
     disp_w  = data.get("disp_w",  current["disp_w"])
     disp_h  = data.get("disp_h",  current["disp_h"])
+    rows    = data.get("rows",    current.get("rows", 16))
+    options = data.get("options", current.get("options", {}))
+    if not isinstance(options, dict):
+        options = {}
     conn = connect()
     try:
         conn.execute(
-            "UPDATE profile SET columns=?, layout=?, disp_w=?, disp_h=? WHERE id=?",
-            (columns, json.dumps(pages), disp_w, disp_h, profile_id),
+            "UPDATE profile SET columns=?, layout=?, disp_w=?, disp_h=?, rows=?, options=? WHERE id=?",
+            (columns, json.dumps(pages), disp_w, disp_h, rows, json.dumps(options), profile_id),
         )
         conn.commit()
         return get_profile(profile_id)
@@ -559,6 +586,60 @@ def delete_profile(profile_id: int) -> str | None:
         conn.execute("DELETE FROM profile WHERE id = ?", (profile_id,))
         conn.commit()
         return None
+    finally:
+        conn.close()
+
+
+def find_profile_id(ref: str | int | None) -> int | None:
+    """Resolve a profile by numeric id or (case-insensitive) name, for
+    per-screen display URLs like /display?profile=kitchen."""
+    if ref is None or str(ref).strip() == "":
+        return None
+    conn = connect()
+    try:
+        ref = str(ref).strip()
+        if ref.isdigit():
+            r = conn.execute("SELECT id FROM profile WHERE id = ?", (int(ref),)).fetchone()
+            if r:
+                return r["id"]
+        r = conn.execute("SELECT id FROM profile WHERE lower(name) = lower(?)", (ref,)).fetchone()
+        return r["id"] if r else None
+    finally:
+        conn.close()
+
+
+def placed_widget_ids() -> set[int]:
+    """Widget ids that appear on any page of any profile. The poller polls
+    these at their own interval and everything else slowly."""
+    conn = connect()
+    try:
+        stack_widgets = {r["id"]: json.loads(r["widget_ids"] or "[]")
+                         for r in conn.execute("SELECT id, widget_ids FROM stack").fetchall()}
+        placed: set[int] = set()
+        for r in conn.execute("SELECT layout FROM profile").fetchall():
+            for page in _parse_pages(r["layout"]):
+                for node in page.get("layout", []) or []:
+                    placed.update(stack_widgets.get(node.get("stack_id"), []))
+        return placed
+    finally:
+        conn.close()
+
+
+def delete_orphan_stacks(profile_id: int) -> int:
+    """Delete stacks of a profile that no page places any more (left behind
+    when a page is deleted). Returns how many were removed."""
+    conn = connect()
+    try:
+        prof = conn.execute("SELECT layout FROM profile WHERE id = ?", (profile_id,)).fetchone()
+        if not prof:
+            return 0
+        used = {n.get("stack_id") for p in _parse_pages(prof["layout"]) for n in (p.get("layout") or [])}
+        ids = [r["id"] for r in conn.execute("SELECT id FROM stack WHERE profile_id = ?", (profile_id,)).fetchall()
+               if r["id"] not in used]
+        for sid in ids:
+            conn.execute("DELETE FROM stack WHERE id = ?", (sid,))
+        conn.commit()
+        return len(ids)
     finally:
         conn.close()
 
@@ -840,7 +921,7 @@ def dump_config(profile_id: int) -> dict:
     conn = connect()
     try:
         prof = conn.execute(
-            "SELECT columns, layout, disp_w, disp_h FROM profile WHERE id = ?", (profile_id,)
+            "SELECT columns, layout, disp_w, disp_h, rows, options FROM profile WHERE id = ?", (profile_id,)
         ).fetchone()
         return {
             "board": dict(prof) if prof else None,
@@ -878,8 +959,9 @@ def restore_config(payload: dict, profile_id: int) -> None:
         b = payload.get("board")
         if b:
             conn.execute(
-                "UPDATE profile SET columns=?, layout=?, disp_w=?, disp_h=? WHERE id=?",
-                (b["columns"], b["layout"], b.get("disp_w", 1920), b.get("disp_h", 720), profile_id),
+                "UPDATE profile SET columns=?, layout=?, disp_w=?, disp_h=?, rows=?, options=? WHERE id=?",
+                (b["columns"], b["layout"], b.get("disp_w", 1920), b.get("disp_h", 720),
+                 b.get("rows", 16), b.get("options", "{}"), profile_id),
             )
 
         for r in payload.get("data_sources", []):
