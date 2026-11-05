@@ -9,21 +9,66 @@ export const PALETTES = [
 ];
 
 export const STYLES = [
-  { key: "classic", label: "Classic" },
-  { key: "glass",   label: "Glass"   },
-  { key: "sharp",   label: "Sharp"   },
-  { key: "soft",    label: "Soft"    },
-  { key: "aurora",  label: "Aurora"  },
+  { key: "classic",  label: "Classic"  },
+  { key: "glass",    label: "Glass"    },
+  { key: "sharp",    label: "Sharp"    },
+  { key: "soft",     label: "Soft"     },
+  { key: "aurora",   label: "Aurora"   },
+  { key: "bento",    label: "Bento"    },
+  { key: "hud",      label: "HUD"      },
+  { key: "signal",   label: "Signal"   },
+  { key: "phosphor", label: "Phosphor" },
+  { key: "paper",    label: "Paper"    },
 ];
 
-// Complete display themes: a shape/surface style, a color preset, a font and
-// a board background applied together. "aurora" owns its card surface, so the
-// Designer's color controls don't apply while it's active.
+// Styles that draw their own card surface, gauges and type. The Designer's
+// card color controls don't apply to them.
+export const OWNING_STYLES = new Set(["aurora", "bento", "hud", "signal", "phosphor", "paper"]);
+// Styles with light cards: widget text switches to dark ink.
+export const LIGHT_STYLES = new Set(["signal", "paper"]);
+
+// Card shapes and surface patterns mix with any display theme.
+// "theme" / "none" leave the theme's own choice in place.
+export const SHAPES = [
+  { key: "theme",    label: "Theme default", blurb: "Whatever the display theme uses" },
+  { key: "soft",     label: "Soft",     blurb: "12 px rounded corners" },
+  { key: "bento",    label: "Bento",    blurb: "Large 26 px corners, like phone widgets" },
+  { key: "chamfer",  label: "Chamfer",  blurb: "Cut corners, like instrument panels" },
+  { key: "tab",      label: "Tab",      blurb: "A folder tab along the top" },
+  { key: "ticket",   label: "Ticket",   blurb: "Notches in both sides" },
+  { key: "brackets", label: "Brackets", blurb: "Corner marks only, no box" },
+  { key: "offset",   label: "Offset",   blurb: "Square with a hard shadow" },
+  { key: "capsule",  label: "Capsule",  blurb: "Very round corners; a full pill on small cards" },
+];
+export const PATTERNS = [
+  { key: "none",      label: "None" },
+  { key: "dots",      label: "Dot grid" },
+  { key: "blueprint", label: "Blueprint" },
+  { key: "hatch",     label: "Hatch" },
+  { key: "grain",     label: "Grain" },
+  { key: "contour",   label: "Contour" },
+  { key: "weave",     label: "Weave" },
+  { key: "scanlines", label: "Scanlines" },
+  { key: "mesh",      label: "Mesh gradient" },
+];
+
+// Complete display themes: a style, a color preset, a font and a board
+// background applied together (card shape and pattern reset to the theme's own).
 export const DISPLAY_THEMES = [
   { key: "classic", label: "Classic", style: "classic", preset: "default", font: "inter", board_bg_color: "#060912",
     blurb: "The original look: solid cards with a colored left edge." },
   { key: "aurora", label: "Aurora Glass", style: "aurora", preset: "aurora", font: "manrope", board_bg_color: "#070a16",
     blurb: "Frosted cards over a slow-moving gradient, thin numerals and gradient rings." },
+  { key: "bento", label: "Bento", style: "bento", preset: "default", font: "manrope", board_bg_color: "#0b0c0f",
+    blurb: "Soft, tinted tiles like phone widgets, with heavy numerals and pill bars." },
+  { key: "hud", label: "HUD", style: "hud", preset: "default", font: "rajdhani", board_bg_color: "#030b14",
+    blurb: "Chamfered panels on a blueprint grid, segmented gauges, cyan on navy." },
+  { key: "signal", label: "Signal", style: "signal", preset: "default", font: "archivo", board_bg_color: "#dfe2e6",
+    blurb: "White cards, black rules and hard shadows, with huge condensed numerals." },
+  { key: "phosphor", label: "Phosphor", style: "phosphor", preset: "default", font: "ibm-plex-mono", board_bg_color: "#020503",
+    blurb: "A green CRT terminal: monospace, block bars, scanlines." },
+  { key: "paper", label: "Paper", style: "paper", preset: "default", font: "schibsted-grotesk", board_bg_color: "#e6e6e1",
+    blurb: "Type and hairlines on e-paper gray, serif numerals, red only for failures." },
   { key: "obsidian", label: "Obsidian", style: "soft", preset: "obsidian", font: "inter", board_bg_color: "#0b0910",
     blurb: "Rounded, deep indigo cards with a soft glow." },
   { key: "carbon", label: "Carbon", style: "sharp", preset: "carbon", font: "rajdhani", board_bg_color: "#050505",
@@ -111,6 +156,9 @@ export const FONTS = [
   { key: "sora",           label: "Sora",           family: "Sora" },
   { key: "ibm-plex-sans",  label: "IBM Plex Sans",  family: "IBM Plex Sans" },
   { key: "manrope",        label: "Manrope",        family: "Manrope" },
+  { key: "archivo",        label: "Archivo",        family: "Archivo" },
+  { key: "ibm-plex-mono",  label: "IBM Plex Mono",  family: "IBM Plex Mono" },
+  { key: "schibsted-grotesk", label: "Schibsted Grotesk", family: "Schibsted Grotesk" },
 ];
 
 const FONT_URLS = {
@@ -123,10 +171,27 @@ const FONT_URLS = {
   "sora":           "https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap",
   "ibm-plex-sans":  "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap",
   "manrope":        "https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap",
+  "archivo":        "https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap",
+  "ibm-plex-mono":  "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap",
+  "schibsted-grotesk": "https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&display=swap",
+  "instrument-serif": "https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap",
 };
 
-// One shared SVG gradient that themes can reference from CSS
-// (stroke: url(#tb-grad-aurora)) for single-value rings.
+// Extra faces a style uses for numerals or headers, whatever the body font.
+const STYLE_FONTS = {
+  aurora: ["manrope"], bento: ["manrope"], hud: ["rajdhani"], signal: ["archivo"],
+  phosphor: ["ibm-plex-mono"], paper: ["instrument-serif", "schibsted-grotesk"],
+};
+
+export function loadFont(key) {
+  const url = FONT_URLS[key];
+  if (!url || document.getElementById(`tb-font-${key}`)) return;
+  const link = Object.assign(document.createElement("link"), { rel: "stylesheet", id: `tb-font-${key}`, href: url });
+  document.head.appendChild(link);
+}
+
+// Shared SVG paint servers that themes reference from CSS: a gradient for
+// Aurora's rings, hatching for Signal and dithering for Paper ring tracks.
 function ensureGradientDefs() {
   if (document.getElementById("tb-grad-defs")) return;
   const holder = document.createElement("div");
@@ -136,30 +201,30 @@ function ensureGradientDefs() {
   holder.innerHTML = `<svg width="0" height="0"><defs>
     <linearGradient id="tb-grad-aurora" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#5eead4"/><stop offset="1" stop-color="#a78bfa"/>
-    </linearGradient></defs></svg>`;
+    </linearGradient>
+    <pattern id="tb-hatch" width="1.6" height="1.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="1.6" height="1.6" fill="#ffffff"/><rect width="0.55" height="1.6" fill="#111111"/>
+    </pattern>
+    <pattern id="tb-dither" width="1" height="1" patternUnits="userSpaceOnUse">
+      <rect width="1" height="1" fill="#e6e6e1"/><circle cx="0.5" cy="0.5" r="0.28" fill="#1b1b1b"/>
+    </pattern></defs></svg>`;
   (document.body || document.documentElement).appendChild(holder);
 }
 
 // scope: pass #preview-viewport in the editor so themes only affect the preview area.
 //        pass null/omit for the display page so themes affect the whole page.
-export function applyTheme({ palette = "default", style = "classic", font = "inter" } = {}, scope = null) {
+export function applyTheme({ palette = "default", style = "classic", font = "inter", shape = "theme", pattern = "none" } = {}, scope = null) {
   const target = scope || document.documentElement;
   target.dataset.palette = palette;
   target.dataset.style   = style;
   target.dataset.font    = font;
-  if (style === "aurora") {
-    if (document.body) ensureGradientDefs();
-    else document.addEventListener("DOMContentLoaded", ensureGradientDefs, { once: true });
-  }
-  const url = FONT_URLS[font];
-  if (url) {
-    let link = document.getElementById("tb-font-link");
-    if (!link) {
-      link = Object.assign(document.createElement("link"), { rel: "stylesheet", id: "tb-font-link" });
-      document.head.appendChild(link);
-    }
-    if (link.href !== url) link.href = url;
-  }
+  target.dataset.shape   = shape || "theme";
+  target.dataset.pattern = pattern || "none";
+  target.dataset.ink     = LIGHT_STYLES.has(style) ? "dark" : "";
+  if (document.body) ensureGradientDefs();
+  else document.addEventListener("DOMContentLoaded", ensureGradientDefs, { once: true });
+  loadFont(font);
+  for (const f of STYLE_FONTS[style] || []) loadFont(f);
 }
 
 export function hexToRgba(hex, alpha = 1) {
@@ -172,8 +237,8 @@ export function hexToRgba(hex, alpha = 1) {
 
 export function applyCardStyle(settings = {}, scope = null) {
   const s = settings;
-  // Aurora draws its own frosted surface and gradient edge in CSS.
-  const ownsSurface = s.theme_style === "aurora";
+  // Complete themes (Aurora, Bento, HUD, …) draw their own card surface in CSS.
+  const ownsSurface = OWNING_STYLES.has(s.theme_style);
 
   const bgColor   = s.card_bg_color   || '#171c24';
   const bgOpacity = s.card_bg_opacity  != null ? parseFloat(s.card_bg_opacity) : 1;

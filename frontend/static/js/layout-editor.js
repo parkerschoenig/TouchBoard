@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { renderWidget, openWidgetAppearancePopover } from "./widgets.js";
-import { STYLES, FONTS, THEME_PRESETS, DISPLAY_THEMES, applyTheme, applyCardStyle, hexToRgba } from "./theme.js";
-import { getPrefs, setPref, APP_THEMES } from "./editor/app-theme.js";
+import { STYLES, FONTS, THEME_PRESETS, DISPLAY_THEMES, SHAPES, PATTERNS, OWNING_STYLES, applyTheme, applyCardStyle, loadFont } from "./theme.js";
+import { getPrefs, setPref } from "./editor/app-theme.js";
 import * as G from "./editor/geometry.js";
 import { createHistory } from "./editor/history.js";
 import { openPalette, isPaletteOpen } from "./editor/palette.js";
@@ -10,7 +10,7 @@ import { exportPage, importPage } from "./editor/page-io.js";
 import { createInspector } from "./editor/inspector.js";
 import { createTiledOverlay } from "./editor/tiled.js";
 
-let currentTheme = { style: "classic", font: "inter" };
+let currentTheme = { style: "classic", font: "inter", shape: "theme", pattern: "none" };
 let currentCardSettings = {};
 let prefs = getPrefs();
 
@@ -3768,8 +3768,8 @@ async function openSettingsPanel(section) {
       applyCardStyle(st, previewScope);
       applyCardStyle(st, byId("preview-viewport"));
       applyTheme(theme, byId("preview-viewport"));
-      previewScope.dataset.style = theme.style;
-      previewScope.dataset.font  = theme.font;
+      applyTheme(theme, previewScope);
+      for (const sec of controlsPane.querySelectorAll(".ds-colors")) sec.classList.toggle("is-owned", OWNING_STYLES.has(theme.style));
       byId("preview-viewport").style.setProperty("--widget-font-scale", st.widget_font_scale || "1");
     };
 
@@ -3778,7 +3778,7 @@ async function openSettingsPanel(section) {
       clearTimeout(_saveTimer);
       _saveTimer = setTimeout(() => {
         api.updateSettings({
-          theme_style: theme.style, theme_font: theme.font,
+          theme_style: theme.style, theme_font: theme.font, theme_shape: theme.shape || "theme", theme_pattern: theme.pattern || "none",
           card_bg_color: st.card_bg_color, card_bg_opacity: String(st.card_bg_opacity),
           card_gradient: String(st.card_gradient), card_bg2_color: st.card_bg2_color,
           card_bg2_opacity: String(st.card_bg2_opacity), card_gradient_dir: String(st.card_gradient_dir),
@@ -3883,7 +3883,7 @@ async function openSettingsPanel(section) {
         b.addEventListener("click", () => {
           const { key, label, accent, ...cardFields } = preset;
           Object.assign(st, cardFields, { board_bg_color: dt.board_bg_color });
-          theme.style = dt.style; theme.font = dt.font;
+          theme.style = dt.style; theme.font = dt.font; theme.shape = "theme"; theme.pattern = "none";
           previewBoard.style.backgroundColor = dt.board_bg_color;
           byId("preview-viewport").style.backgroundColor = dt.board_bg_color;
           update();
@@ -3970,10 +3970,10 @@ async function openSettingsPanel(section) {
       // ── Style picker ──────────────────────────────────────────────────────
       const styleSec = document.createElement("div");
       styleSec.className = "ds-section";
-      styleSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Shape" }));
+      styleSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Base style (uses the colors below)" }));
       const styleGrid = document.createElement("div");
       styleGrid.className = "ds-style-grid";
-      for (const s of STYLES) {
+      for (const s of STYLES.filter((x) => !OWNING_STYLES.has(x.key))) {
         const btn = Object.assign(document.createElement("button"), {
           type: "button",
           className: "ds-style-btn" + (theme.style === s.key ? " active" : ""),
@@ -3989,6 +3989,34 @@ async function openSettingsPanel(section) {
       }
       styleSec.appendChild(styleGrid);
       controlsPane.appendChild(styleSec);
+
+      // ── Card shape + surface pattern (mix with any theme) ─────────────────
+      const swatchSection = (label, items, current, key) => {
+        const sec = document.createElement("div");
+        sec.className = "ds-section";
+        sec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: label }));
+        const gridEl = document.createElement("div");
+        gridEl.className = "ds-swatch-grid";
+        for (const it of items) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "ds-swatch" + (current === it.key ? " active" : "");
+          b.title = it.blurb || it.label;
+          const demo = document.createElement("div");
+          demo.className = "ds-swatch-demo";
+          demo.dataset.style = "classic";
+          if (key === "shape") demo.dataset.shape = it.key === "theme" ? "soft" : it.key;
+          else demo.dataset.pattern = it.key;
+          demo.appendChild(Object.assign(document.createElement("div"), { className: "stack-cell" }));
+          b.append(demo, document.createTextNode(it.label));
+          b.addEventListener("click", () => { theme[key] = it.key; update(); buildControls(); });
+          gridEl.appendChild(b);
+        }
+        sec.appendChild(gridEl);
+        return sec;
+      };
+      controlsPane.appendChild(swatchSection("Card shape", SHAPES, theme.shape || "theme", "shape"));
+      controlsPane.appendChild(swatchSection("Surface pattern", PATTERNS, theme.pattern || "none", "pattern"));
 
       // ── Font picker ───────────────────────────────────────────────────────
       const fontSec = document.createElement("div");
@@ -4030,9 +4058,14 @@ async function openSettingsPanel(section) {
       scaleSec.appendChild(scaleRow);
       controlsPane.appendChild(scaleSec);
 
+      if (OWNING_STYLES.has(theme.style)) {
+        controlsPane.appendChild(Object.assign(document.createElement("p"), { className: "ds-owned-note",
+          textContent: "This display theme draws its own cards, so the color controls below are off. Pick Classic, Obsidian, Carbon, Nord or Light to use them." }));
+      }
+
       // ── Background section ────────────────────────────────────────────────
       const bgSec = document.createElement("div");
-      bgSec.className = "ds-section";
+      bgSec.className = "ds-section ds-colors" + (OWNING_STYLES.has(theme.style) ? " is-owned" : "");
       bgSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Background" }));
       bgSec.appendChild(makeRow("Color",
         makeColorBtn(st.card_bg_color || "#171c24", v => { st.card_bg_color = v; update(); }),
@@ -4061,7 +4094,7 @@ async function openSettingsPanel(section) {
 
       // ── Border section ────────────────────────────────────────────────────
       const borderSec = document.createElement("div");
-      borderSec.className = "ds-section";
+      borderSec.className = "ds-section ds-colors" + (OWNING_STYLES.has(theme.style) ? " is-owned" : "");
       borderSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Border" }));
       borderSec.appendChild(makeRow("Color",
         makeColorBtn(st.card_stroke_color || "#2b3a50", v => { st.card_stroke_color = v; update(); }),
@@ -4076,7 +4109,7 @@ async function openSettingsPanel(section) {
 
       // ── Accent section ────────────────────────────────────────────────────
       const accentSec = document.createElement("div");
-      accentSec.className = "ds-section";
+      accentSec.className = "ds-section ds-colors" + (OWNING_STYLES.has(theme.style) ? " is-owned" : "");
       accentSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Left Accent" }));
       accentSec.appendChild(makeRow("Color",
         makeColorBtn(st.card_accent_color || "#3b82f6", v => { st.card_accent_color = v; update(); }),
@@ -4091,7 +4124,7 @@ async function openSettingsPanel(section) {
 
       // ── Glow section ──────────────────────────────────────────────────────
       const glowSec = document.createElement("div");
-      glowSec.className = "ds-section";
+      glowSec.className = "ds-section ds-colors" + (OWNING_STYLES.has(theme.style) ? " is-owned" : "");
       glowSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Glow" }));
       const { row: glowRow } = makeToggleRow("Enable glow", st.card_glow === "true", checked => {
         st.card_glow = String(checked);
@@ -4178,7 +4211,7 @@ async function openSettingsPanel(section) {
   dlg.showModal();
   _makeDraggable(dlg, head);
 
-  if (section === "Editor") { titleEl.textContent = "Editor theme & modes"; renderEditorPrefs(contentEl); }
+  if (section === "Editor") { titleEl.textContent = "Editor preferences"; renderEditorPrefs(contentEl); }
   else if (section === "Notifications") { titleEl.textContent = "Alerts & notifications"; renderNotificationsTab(contentEl); }
   else if (section === "Profiles") renderProfilesTab();
   else if (section === "Ping Targets") renderPingTargetsTab();
@@ -4765,7 +4798,8 @@ function designerThumb(dt, preset) {
   const b = document.createElement("div");
   b.className = "ds-thumb-board";
   b.id = `ds-thumb-${dt.key}`;
-  b.dataset.style = dt.style; b.dataset.font = dt.font;
+  applyTheme({ style: dt.style, font: dt.font }, b);
+  loadFont(dt.font);
   Object.assign(b.style, { width: dispW + "px", height: dispH + "px", transform: `scale(${W / dispW})`, backgroundColor: dt.board_bg_color,
     gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${ROWS}, minmax(0, 1fr))` });
   const layout = grid ? currentLayout() : (currentPage().layout || []);
@@ -4867,22 +4901,7 @@ function setPageMode(mode) {
 function renderEditorPrefs(contentEl) {
   contentEl.innerHTML = "";
   const p = getPrefs();
-  const intro = Object.assign(document.createElement("p"), { className: "settings-ds-hint", textContent: "These are saved on this device, so a tablet and a desktop can each have their own." });
-  const head = Object.assign(document.createElement("div"), { className: "settings-section-head", textContent: "Editor theme" });
-  const grid2 = Object.assign(document.createElement("div"), { className: "ed-theme-cards" });
-  for (const t of APP_THEMES) {
-    const b = Object.assign(document.createElement("button"), { type: "button", className: `ed-theme-card t-${t.key}` + (p.theme === t.key ? " active" : "") });
-    b.innerHTML = `<span class="ed-theme-swatch"><i></i><i></i><i></i></span><b></b><small></small>`;
-    b.querySelector("b").textContent = t.label;
-    b.querySelector("small").textContent = t.blurb;
-    b.addEventListener("click", () => {
-      setPref("theme", t.key);
-      prefs = getPrefs();
-      renderEditorPrefs(contentEl);
-      requestAnimationFrame(updatePreviewSize);
-    });
-    grid2.appendChild(b);
-  }
+  const intro = Object.assign(document.createElement("p"), { className: "settings-ds-hint", textContent: "These are saved on this device." });
   const modes = Object.assign(document.createElement("div"), { className: "settings-section-head", textContent: "Editing" });
   const mkToggle = (label, hint, key) => {
     const row = Object.assign(document.createElement("label"), { className: "ed-pref-row" });
@@ -4894,7 +4913,7 @@ function renderEditorPrefs(contentEl) {
     return row;
   };
   const note = Object.assign(document.createElement("p"), { className: "settings-ds-hint", textContent: "Tiled pages are set per page in the inspector (select nothing, then Page → Layout). Editing on the display is set per screen in the same place." });
-  contentEl.append(intro, head, grid2, modes,
+  contentEl.append(intro, modes,
     mkToggle("Inspector panel", "Card and page settings in a panel on the right. Off: settings open from ✎ on each card.", "inspector"),
     mkToggle("Draw to place", "Drag across empty grid to draw a card, then choose what goes in it.", "drawToPlace"),
     note);
@@ -5022,8 +5041,9 @@ function buildCommands() {
   add("Pages", "Import a page…", doImportPage, { order: 35 });
   add("Edit", "Undo", () => history.undo(), { hint: "Ctrl Z", order: 40 });
   add("Edit", "Redo", () => history.redo(), { hint: "Ctrl ⇧ Z", order: 41 });
-  for (const t of APP_THEMES) add("Editor theme", `Editor theme: ${t.label}`, () => { setPref("theme", t.key); prefs = getPrefs(); requestAnimationFrame(updatePreviewSize); }, { order: 50 });
   for (const dt of DISPLAY_THEMES) add("Display theme", `Display theme: ${dt.label}`, () => applyDisplayTheme(dt), { order: 55 });
+  for (const s of SHAPES) add("Display theme", `Card shape: ${s.label}`, () => setBoardLook({ shape: s.key }), { order: 56 });
+  for (const pt of PATTERNS) add("Display theme", `Surface pattern: ${pt.label}`, () => setBoardLook({ pattern: pt.key }), { order: 57 });
   add("Settings", prefs.drawToPlace ? "Turn off draw to place" : "Turn on draw to place", () => { setPref("drawToPlace", !prefs.drawToPlace); prefs = getPrefs(); applyPrefs(); }, { order: 60 });
   add("Settings", prefs.inspector ? "Hide the inspector panel" : "Show the inspector panel", () => { setPref("inspector", !prefs.inspector); prefs = getPrefs(); applyPrefs(); }, { order: 61 });
   for (const s of ["Designer", "Integrations", "Ping Targets", "Notifications", "Profiles", "Users", "Backup", "Editor"]) add("Settings", `Open ${s === "Editor" ? "editor preferences" : s}`, () => openSettingsPanel(s), { order: 62 });
@@ -5034,13 +5054,21 @@ function buildCommands() {
 async function applyDisplayTheme(dt) {
   const preset = THEME_PRESETS.find((p) => p.key === dt.preset) || {};
   const { key, label, accent, ...cardFields } = preset;
-  const patch = { ...cardFields, theme_style: dt.style, theme_font: dt.font, board_bg_color: dt.board_bg_color };
+  const patch = { ...cardFields, theme_style: dt.style, theme_font: dt.font, theme_shape: "theme", theme_pattern: "none", board_bg_color: dt.board_bg_color };
   const body = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, String(v)]));
   const saved = await api.updateSettings(body);
   Object.assign(currentCardSettings, saved);
-  currentTheme.style = dt.style; currentTheme.font = dt.font;
+  currentTheme.style = dt.style; currentTheme.font = dt.font; currentTheme.shape = "theme"; currentTheme.pattern = "none";
   applyBoardTheme();
   toast(`Display theme: ${dt.label}`);
+}
+
+async function setBoardLook({ shape, pattern }) {
+  const body = {};
+  if (shape) { body.theme_shape = shape; currentTheme.shape = shape; }
+  if (pattern) { body.theme_pattern = pattern; currentTheme.pattern = pattern; }
+  Object.assign(currentCardSettings, await api.updateSettings(body));
+  applyBoardTheme();
 }
 
 function applyBoardTheme() {
@@ -5236,8 +5264,10 @@ async function init() {
     showOnboarding({ ...settings, is_default_password: currentUser.is_default_password });
   }
 
-  currentTheme.style = settings.theme_style || "classic";
-  currentTheme.font  = settings.theme_font  || "inter";
+  currentTheme.style   = settings.theme_style   || "classic";
+  currentTheme.font    = settings.theme_font    || "inter";
+  currentTheme.shape   = settings.theme_shape   || "theme";
+  currentTheme.pattern = settings.theme_pattern || "none";
   Object.assign(currentCardSettings, settings);
   applyBoardTheme();
   dispW = board.disp_w || 1920;
@@ -5433,21 +5463,6 @@ async function init() {
   byId("res-w").addEventListener("change", onRes);
   byId("res-h").addEventListener("change", onRes);
   byId("rotate-btn").addEventListener("click", () => setScreen(dispH, dispW));
-
-  // cockpit dock
-  byId("ed-dock").addEventListener("click", (e) => {
-    const act = e.target.closest("button")?.dataset.act;
-    const sel = selectedStackId;
-    if (act === "add") openPalette(buildCommands, { initial: "Add " });
-    else if (act === "undo") history.undo();
-    else if (act === "redo") history.redo();
-    else if (act === "duplicate" && sel != null) duplicateCard(sel);
-    else if (act === "fill" && sel != null) fillCard(sel);
-    else if (act === "stack" && sel != null) openStackMenu(stacks.find((s) => s.id === sel), e.target.closest("button"));
-    else if (act === "inspect") document.body.classList.toggle("sheet-open");
-    else if (act === "display") window.open(byId("open-display-link").href, "_blank");
-    else if (["duplicate", "fill", "stack"].includes(act)) toast("Select a card first");
-  });
 
   document.addEventListener("tb:prefs", () => { prefs = getPrefs(); applyPrefs(); });
   applyPrefs();

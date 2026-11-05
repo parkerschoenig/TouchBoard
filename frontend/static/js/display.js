@@ -61,7 +61,7 @@ const now = () => Date.now();
 
 // ── theme / settings ─────────────────────────────────────────────────────────
 function applySettings(s) {
-  applyTheme({ style: s.theme_style, font: s.theme_font });
+  applyTheme({ style: s.theme_style, font: s.theme_font, shape: s.theme_shape, pattern: s.theme_pattern });
   applyCardStyle(s);
   document.body.style.backgroundColor = s.board_bg_color || "";
   boardEl.style.backgroundColor = s.board_bg_color || "";

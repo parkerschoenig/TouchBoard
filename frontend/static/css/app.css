@@ -1005,61 +1005,61 @@ select.sb-form-input { padding: 5px 10px; }
 .wc-configure-btn:hover { background: rgba(59,130,246,.25); border-color: #3b82f6; color: #e6edf3; }
 
 /* ── Per-widget light theme ───────────────────────────────────────────────── */
-.widget--light {
+:is(.widget--light, [data-ink="dark"] .widget) {
   color: #1e293b;
 }
-.widget--light .widget-head { color: #1e293b !important; border-bottom-color: rgba(0,0,0,.12) !important; }
-.widget--light .widget-title { color: #1e293b !important; }
-.widget--light .widget-ctrl {
+:is(.widget--light, [data-ink="dark"] .widget) .widget-head { color: #1e293b !important; border-bottom-color: rgba(0,0,0,.12) !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .widget-title { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .widget-ctrl {
   background: rgba(255,255,255,.7); border-color: rgba(0,0,0,.18); color: rgba(0,0,0,.4);
 }
-.widget--light .widget-ctrl:hover {
+:is(.widget--light, [data-ink="dark"] .widget) .widget-ctrl:hover {
   color: rgba(0,0,0,.75); background: rgba(0,0,0,.08); border-color: rgba(0,0,0,.35);
 }
 /* NetBox */
-.widget--light .nb-rack-name,
-.widget--light .nb-rack-device-name,
-.widget--light .nb-big-num,
-.widget--light .nb-big-label,
-.widget--light .nb-view-title,
-.widget--light .nb-ip-addr { color: #1e293b !important; }
-.widget--light .nb-rack-meta,
-.widget--light .nb-rack-site,
-.widget--light .nb-rack-empty-u,
-.widget--light .nb-rack-device-role,
-.widget--light .nb-ip-dns { color: #64748b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .nb-rack-name,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-rack-device-name,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-big-num,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-big-label,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-view-title,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-ip-addr { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .nb-rack-meta,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-rack-site,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-rack-empty-u,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-rack-device-role,
+:is(.widget--light, [data-ink="dark"] .widget) .nb-ip-dns { color: #64748b !important; }
 /* TrueNAS */
-.widget--light .tn-pool-name,
-.widget--light .tn-usage-pct,
-.widget--light .tn-usage-detail,
-.widget--light .tn-stat-label,
-.widget--light .tn-ml-label,
-.widget--light .tn-ml-val { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .tn-pool-name,
+:is(.widget--light, [data-ink="dark"] .widget) .tn-usage-pct,
+:is(.widget--light, [data-ink="dark"] .widget) .tn-usage-detail,
+:is(.widget--light, [data-ink="dark"] .widget) .tn-stat-label,
+:is(.widget--light, [data-ink="dark"] .widget) .tn-ml-label,
+:is(.widget--light, [data-ink="dark"] .widget) .tn-ml-val { color: #1e293b !important; }
 /* Proxmox */
-.widget--light .px-uptime,
-.widget--light .px-sec-title,
-.widget--light .px-col { color: #1e293b !important; }
-.widget--light .px-muted { color: #64748b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .px-uptime,
+:is(.widget--light, [data-ink="dark"] .widget) .px-sec-title,
+:is(.widget--light, [data-ink="dark"] .widget) .px-col { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .px-muted { color: #64748b !important; }
 /* Clock */
-.widget--light .wc-time,
-.widget--light .wc-date,
-.widget--light .wc-tz { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .wc-time,
+:is(.widget--light, [data-ink="dark"] .widget) .wc-date,
+:is(.widget--light, [data-ink="dark"] .widget) .wc-tz { color: #1e293b !important; }
 /* Ping */
-.widget--light .ping-label { color: #1e293b !important; }
-.widget--light .ping-meta  { color: #64748b !important; }
-.widget--light .ping-group-header { color: #64748b !important; border-top-color: rgba(0,0,0,.12) !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ping-label { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ping-meta  { color: #64748b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ping-group-header { color: #64748b !important; border-top-color: rgba(0,0,0,.12) !important; }
 /* Weather */
-.widget--light .ww-cond    { color: #1e293b !important; }
-.widget--light .ww-feels,
-.widget--light .ww-meta-item,
-.widget--light .ww-location,
-.widget--light .ww-view-title { color: #475569 !important; }
-.widget--light .ww-hour-time,
-.widget--light .ww-day-name  { color: #1e293b !important; }
-.widget--light .ww-hour-temp,
-.widget--light .ww-day-high  { color: #1e293b !important; }
-.widget--light .ww-day-low,
-.widget--light .ww-day-precip { color: #64748b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ww-cond    { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ww-feels,
+:is(.widget--light, [data-ink="dark"] .widget) .ww-meta-item,
+:is(.widget--light, [data-ink="dark"] .widget) .ww-location,
+:is(.widget--light, [data-ink="dark"] .widget) .ww-view-title { color: #475569 !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ww-hour-time,
+:is(.widget--light, [data-ink="dark"] .widget) .ww-day-name  { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ww-hour-temp,
+:is(.widget--light, [data-ink="dark"] .widget) .ww-day-high  { color: #1e293b !important; }
+:is(.widget--light, [data-ink="dark"] .widget) .ww-day-low,
+:is(.widget--light, [data-ink="dark"] .widget) .ww-day-precip { color: #64748b !important; }
 
 .w-ping { display: flex; flex-direction: column; gap: 6px; }
 .ping-group-header {

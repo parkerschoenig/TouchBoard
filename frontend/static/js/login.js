@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { applyTheme } from "./theme.js";
-import "./editor/app-theme.js"; // applies this device's editor theme (Studio, Daylight, Console, Cockpit)
+import "./editor/app-theme.js"; // applies the editor theme (Studio)
 
 fetch("/api/settings").then(r => r.json()).then(s => {
   applyTheme({ palette: s.theme_palette, style: s.theme_style, font: s.theme_font });
