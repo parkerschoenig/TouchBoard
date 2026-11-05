@@ -2,8 +2,11 @@
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
-WidgetType = Literal["ping", "weather", "clock", "proxmox", "truenas", "netbox", "adguard", "opnsense", "stream", "calendar"]
-SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense", "google_calendar"]
+WidgetType = Literal[
+    "ping", "weather", "clock", "proxmox", "truenas", "netbox", "adguard", "opnsense", "stream", "calendar",
+    "bookmarks", "rest", "nowplaying", "notes", "photos", "rss",
+]
+SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense", "google_calendar", "plex", "jellyfin", "rest"]
 
 
 class WidgetIn(BaseModel):
@@ -44,6 +47,8 @@ class LayoutNode(BaseModel):
 
 class BoardUpdate(BaseModel):
     columns: Optional[int] = None
+    rows: Optional[int] = Field(default=None, ge=4, le=64)
+    options: Optional[dict[str, Any]] = None
     layout: Optional[list[LayoutNode]] = None  # legacy, ignored if pages provided
     pages: Optional[list[dict]] = None
 
@@ -58,6 +63,8 @@ class ProfileUpdate(BaseModel):
     columns: Optional[int] = None
     layout: Optional[list[LayoutNode]] = None  # legacy, ignored if pages provided
     pages: Optional[list[dict]] = None
+    rows: Optional[int] = Field(default=None, ge=4, le=64)
+    options: Optional[dict[str, Any]] = None
     disp_w: Optional[int] = None
     disp_h: Optional[int] = None
 
@@ -133,6 +140,10 @@ class SettingsPatch(BaseModel):
     onboarding_done:     Optional[str] = None
     tips_enabled:        Optional[str] = None
     widget_font_scale:   Optional[str] = None
+    notify_ntfy_url:     Optional[str] = None
+    notify_webhook_url:  Optional[str] = None
+    notify_min_level:    Optional[Literal["warn", "crit"]] = None
+    notify_cooldown_min: Optional[str] = None
 
 
 class BackupExportIn(BaseModel):
