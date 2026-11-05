@@ -9,8 +9,8 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 - **Layout editor with an inspector** - the board is previewed at the screen's real resolution, so what you see is exactly what the display shows. Select a card to edit its size, stack, appearance and alerts in the side panel
 - **Several ways to place cards** - drag from the library, tap ＋ to drop into the first free space, or draw a rectangle on the grid and pick what goes in it. Pages can also be **tiled**: cards always fill the page and dragging the line between two cards resizes both
 - **Undo, keyboard and command palette** - Ctrl Z / Ctrl Shift Z, arrow keys to move, Shift + arrows to resize, and Ctrl K to run any action
-- **Four editor themes** - Studio, Daylight, Console and Cockpit (touch-first, for editing on the touchscreen itself), chosen per device
-- **Display themes** - Aurora Glass (frosted cards over a moving gradient) plus Classic, Obsidian, Carbon, Nord and Light, with live previews of your own board in the Designer
+- **Display themes** - complete looks that restyle the cards and everything inside them (gauges, bars, type, status colors): Aurora Glass, Bento, HUD, Signal, Phosphor and Paper, plus Classic, Obsidian, Carbon, Nord and Light. The Designer shows live previews of your own board in each
+- **Card shapes and surface patterns** - mix any theme with a card shape (Soft, Bento, Chamfer, Tab, Ticket, Brackets, Offset, Capsule) and a surface pattern (Dot grid, Blueprint, Hatch, Grain, Contour, Weave, Scanlines, Mesh gradient)
 - **Widget stacks** - group several widgets in one card; tap the dots to switch, or let them cycle automatically
 - **Multi-page boards** - swipe, arrow keys, or rotate pages on a timer
 - **Alerts** - thresholds per widget metric (CPU, latency, pool usage, any REST value…), sparklines of recent history, a highlighted card, an optional jump to it, and push notifications via ntfy or a webhook
@@ -177,7 +177,7 @@ Alerting cards are outlined on the editor and the display, and the display can j
 | [ / ] | Previous / next page |
 | / | Search the widget library |
 
-Editor theme and editing modes (inspector panel, draw to place) are under **Settings → Editor theme & modes** and are remembered per device.
+Editing modes (inspector panel, draw to place) are under **Settings → Editor preferences** and are remembered per device.
 
 ---
 
