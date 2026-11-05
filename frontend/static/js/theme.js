@@ -13,6 +13,25 @@ export const STYLES = [
   { key: "glass",   label: "Glass"   },
   { key: "sharp",   label: "Sharp"   },
   { key: "soft",    label: "Soft"    },
+  { key: "aurora",  label: "Aurora"  },
+];
+
+// Complete display themes: a shape/surface style, a color preset, a font and
+// a board background applied together. "aurora" owns its card surface, so the
+// Designer's color controls don't apply while it's active.
+export const DISPLAY_THEMES = [
+  { key: "classic", label: "Classic", style: "classic", preset: "default", font: "inter", board_bg_color: "#060912",
+    blurb: "The original look: solid cards with a colored left edge." },
+  { key: "aurora", label: "Aurora Glass", style: "aurora", preset: "aurora", font: "manrope", board_bg_color: "#070a16",
+    blurb: "Frosted cards over a slow-moving gradient, thin numerals and gradient rings." },
+  { key: "obsidian", label: "Obsidian", style: "soft", preset: "obsidian", font: "inter", board_bg_color: "#0b0910",
+    blurb: "Rounded, deep indigo cards with a soft glow." },
+  { key: "carbon", label: "Carbon", style: "sharp", preset: "carbon", font: "rajdhani", board_bg_color: "#050505",
+    blurb: "Square black cards with an amber edge." },
+  { key: "nord", label: "Nord", style: "classic", preset: "nord", font: "ibm-plex-sans", board_bg_color: "#242933",
+    blurb: "Muted arctic blues." },
+  { key: "light", label: "Light", style: "soft", preset: "light", font: "inter", board_bg_color: "#e2e8f0",
+    blurb: "Light cards for bright rooms." },
 ];
 
 export const THEME_PRESETS = [
@@ -65,6 +84,14 @@ export const THEME_PRESETS = [
     card_glow: "false", card_glow_color: "#3b82f6", card_glow_opacity: 0.15, card_glow_size: 8,
   },
   {
+    key: "aurora", label: "Aurora", accent: "#5eead4",
+    card_bg_color: "#ffffff", card_bg_opacity: 0.08,
+    card_gradient: "false", card_bg2_color: "#ffffff", card_bg2_opacity: 0, card_gradient_dir: 160,
+    card_stroke_color: "#ffffff", card_stroke_opacity: 0.18, card_stroke_width: 1,
+    card_accent_color: "#5eead4", card_accent_opacity: 0, card_accent_width: 0,
+    card_glow: "false", card_glow_color: "#a78bfa", card_glow_opacity: 0.2, card_glow_size: 16,
+  },
+  {
     key: "forest", label: "Forest", accent: "#34d399",
     card_bg_color: "#0d1f17", card_bg_opacity: 1,
     card_gradient: "true", card_bg2_color: "#0a1a12", card_bg2_opacity: 1, card_gradient_dir: 180,
@@ -83,6 +110,7 @@ export const FONTS = [
   { key: "jetbrains-mono", label: "JetBrains Mono", family: "JetBrains Mono" },
   { key: "sora",           label: "Sora",           family: "Sora" },
   { key: "ibm-plex-sans",  label: "IBM Plex Sans",  family: "IBM Plex Sans" },
+  { key: "manrope",        label: "Manrope",        family: "Manrope" },
 ];
 
 const FONT_URLS = {
@@ -94,7 +122,23 @@ const FONT_URLS = {
   "jetbrains-mono": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap",
   "sora":           "https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap",
   "ibm-plex-sans":  "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap",
+  "manrope":        "https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap",
 };
+
+// One shared SVG gradient that themes can reference from CSS
+// (stroke: url(#tb-grad-aurora)) for single-value rings.
+function ensureGradientDefs() {
+  if (document.getElementById("tb-grad-defs")) return;
+  const holder = document.createElement("div");
+  holder.id = "tb-grad-defs";
+  holder.setAttribute("aria-hidden", "true");
+  holder.style.cssText = "position:absolute;width:0;height:0;overflow:hidden";
+  holder.innerHTML = `<svg width="0" height="0"><defs>
+    <linearGradient id="tb-grad-aurora" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5eead4"/><stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient></defs></svg>`;
+  (document.body || document.documentElement).appendChild(holder);
+}
 
 // scope: pass #preview-viewport in the editor so themes only affect the preview area.
 //        pass null/omit for the display page so themes affect the whole page.
@@ -103,6 +147,10 @@ export function applyTheme({ palette = "default", style = "classic", font = "int
   target.dataset.palette = palette;
   target.dataset.style   = style;
   target.dataset.font    = font;
+  if (style === "aurora") {
+    if (document.body) ensureGradientDefs();
+    else document.addEventListener("DOMContentLoaded", ensureGradientDefs, { once: true });
+  }
   const url = FONT_URLS[font];
   if (url) {
     let link = document.getElementById("tb-font-link");
@@ -124,6 +172,8 @@ export function hexToRgba(hex, alpha = 1) {
 
 export function applyCardStyle(settings = {}, scope = null) {
   const s = settings;
+  // Aurora draws its own frosted surface and gradient edge in CSS.
+  const ownsSurface = s.theme_style === "aurora";
 
   const bgColor   = s.card_bg_color   || '#171c24';
   const bgOpacity = s.card_bg_opacity  != null ? parseFloat(s.card_bg_opacity) : 1;
@@ -164,14 +214,15 @@ export function applyCardStyle(settings = {}, scope = null) {
     el.id = tagId;
     document.head.appendChild(el);
   }
-  el.textContent = `
+  el.textContent = ownsSurface ? "" : `
     ${prefix} .layout-stack-card,
     ${prefix} .stack-cell {
       background: ${bgValue} !important;
       border: ${strokeWidth}px solid ${strokeRgba} !important;
       box-shadow: ${glowValue} !important;
     }
-    ${prefix} .layout-stack-card {
+    ${prefix} .layout-stack-card,
+    ${prefix} .stack-cell {
       border-left: ${accentWidth}px solid ${accentRgba} !important;
     }
   `;
