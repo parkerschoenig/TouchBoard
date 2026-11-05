@@ -384,10 +384,10 @@ export function renderRss(widget, data) {
 const BULB = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const PLUG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-function _lightsCall(widget, action, ids) {
+function _lightsCall(widget, action, ids, extra = {}) {
   return fetch(`/api/widgets/${widget.id}/lights`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, entity_ids: ids }),
+    body: JSON.stringify({ action, entity_ids: ids, ...extra }),
   }).then(async (r) => {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
   });
@@ -458,8 +458,24 @@ export function renderLights(widget, data) {
       tile.innerHTML = `<span class="lt-ico">${it.domain === "switch" ? PLUG : BULB}</span><span class="lt-name"></span><span class="lt-state"></span>`;
       tile.querySelector(".lt-name").textContent = it.name;
       _paintTile(tile, it);
+      const hasPanel = it.domain === "light" && (it.dimmable || it.color_capable || it.temp_capable);
+      let pressTimer = null, held = false, px = 0, py = 0;
+      if (live && hasPanel) {
+        tile.addEventListener("pointerdown", (e) => {
+          held = false; px = e.clientX; py = e.clientY;
+          clearTimeout(pressTimer);
+          pressTimer = setTimeout(() => { held = true; if (it.available) openLightPanel(widget, it); }, 450);
+        });
+        const cancel = (e) => {
+          if (e.type === "pointermove" && Math.hypot(e.clientX - px, e.clientY - py) < 10) return;
+          clearTimeout(pressTimer);
+        };
+        ["pointerup", "pointercancel", "pointerleave", "pointermove"].forEach((t) => tile.addEventListener(t, cancel));
+        tile.addEventListener("contextmenu", (e) => e.preventDefault());
+      }
       tile.addEventListener("click", (e) => {
         e.stopPropagation();
+        if (held) { held = false; return; }   // that press opened the panel
         if (!live || !it.available) return;
         const before = { ...it };
         it.on = !it.on;
@@ -473,6 +489,128 @@ export function renderLights(widget, data) {
     wrap.appendChild(grid);
   }
   return wrap;
+}
+
+// ── Light panel: hold a tile for brightness, white temperature and colour ────
+
+const SWATCHES = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#0a84ff", "#5e5ce6", "#bf5af2", "#ff2d92"];
+
+function _hsvHex(h, s = 1, v = 1) {
+  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return "#" + [f(5), f(3), f(1)].map((x) => Math.round(x * 255).toString(16).padStart(2, "0")).join("");
+}
+const _hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+function _hexHue(hex) {
+  const [r, g, b] = _hexRgb(hex).map((x) => x / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  if (!d) return 0;
+  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return Math.round((h * 60 + 360) % 360);
+}
+
+// Sends at most every 350 ms while a slider moves; the last value always goes.
+function _throttled(send) {
+  let timer = null, pending = null;
+  const flush = () => { timer = null; if (pending != null) { const v = pending; pending = null; send(v); } };
+  return { push(v) { pending = v; if (!timer) timer = setTimeout(flush, 350); }, now(v) { pending = v; clearTimeout(timer); flush(); } };
+}
+
+export function openLightPanel(widget, it) {
+  document.querySelector(".lt-sheet-backdrop")?.remove();
+  const back = el("div", "lt-sheet-backdrop");
+  const sheet = el("div", "lt-sheet");
+  sheet.setAttribute("role", "dialog");
+  sheet.setAttribute("aria-label", it.name);
+  back.appendChild(sheet);
+
+  let idle = null;
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const close = () => { clearTimeout(idle); back.remove(); document.removeEventListener("keydown", onKey); };
+  const touch = () => { clearTimeout(idle); idle = setTimeout(close, 20000); };   // don't leave a kiosk covered
+  document.addEventListener("keydown", onKey);
+  back.addEventListener("click", (e) => { if (e.target === back) close(); });
+  back.addEventListener("pointerdown", (e) => { e.stopPropagation(); touch(); });
+
+  const state = { on: it.on, bri: it.brightness ?? 100, kelvin: it.kelvin, hue: it.hue ?? (it.color ? _hexHue(it.color) : 30) };
+  const status = el("span", "lt-sheet-status");
+  const power = el("button", "lt-sheet-power");
+  const paint = () => {
+    sheet.classList.toggle("is-on", state.on);
+    sheet.style.setProperty("--lt-color", state.on && it.color ? it.color : "");
+    power.textContent = state.on ? "Turn off" : "Turn on";
+    status.textContent = state.on ? (it.dimmable ? `On · ${state.bri}%` : "On") : "Off";
+  };
+  const send = (extra, action = "turn_on") => {
+    touch();
+    _lightsCall(widget, action, [it.id], extra).catch((e) => { status.textContent = `Couldn't reach the light (${e.message})`; });
+  };
+
+  const head = el("div", "lt-sheet-head");
+  const ico = el("span", "lt-ico");
+  ico.innerHTML = BULB;
+  const titles = el("div", "lt-sheet-titles");
+  titles.append(el("b", "", it.name), status);
+  const x = el("button", "lt-sheet-close", "✕");
+  x.type = "button";
+  x.setAttribute("aria-label", "Close");
+  x.addEventListener("click", close);
+  head.append(ico, titles, x);
+  sheet.appendChild(head);
+
+  power.type = "button";
+  power.addEventListener("click", () => { state.on = !state.on; it.on = state.on; paint(); send({}, "toggle"); });
+  sheet.appendChild(power);
+
+  const slider = (label, cls, min, max, value, fmt, onMove) => {
+    const row = el("div", "lt-sheet-row");
+    const val = el("span", "lt-sheet-val", fmt(value));
+    row.append(el("span", "", label), val);
+    const r = Object.assign(document.createElement("input"), { type: "range", className: `lt-range ${cls}`, min, max, value });
+    const t = _throttled((v) => onMove(v));
+    r.addEventListener("input", () => { val.textContent = fmt(Number(r.value)); t.push(Number(r.value)); touch(); });
+    r.addEventListener("change", () => t.now(Number(r.value)));
+    sheet.append(row, r);
+    return r;
+  };
+
+  if (it.dimmable) {
+    slider("Brightness", "lt-range-bri", 1, 100, state.bri, (v) => `${v}%`, (v) => {
+      state.bri = v; state.on = true; it.on = true; paint(); send({ brightness: v });
+    });
+  }
+  if (it.temp_capable) {
+    const lo = it.min_kelvin || 2000, hi = it.max_kelvin || 6500;
+    slider("White", "lt-range-ct", lo, hi, state.kelvin || Math.round((lo + hi) / 2), (v) => `${v} K`, (v) => {
+      state.kelvin = v; state.on = true; it.on = true; paint(); send({ kelvin: v });
+    });
+  }
+  if (it.color_capable) {
+    sheet.appendChild(el("div", "lt-sheet-row", "Colour"));
+    const sw = el("div", "lt-swatches");
+    const hueRange = Object.assign(document.createElement("input"), { type: "range", className: "lt-range lt-range-hue", min: 0, max: 359, value: state.hue });
+    for (const c of SWATCHES) {
+      const b = el("button", "lt-swatch");
+      b.type = "button";
+      b.style.background = c;
+      b.setAttribute("aria-label", c);
+      b.addEventListener("click", () => {
+        state.hue = _hexHue(c); hueRange.value = state.hue;
+        state.on = true; it.on = true; it.color = c; paint();
+        send({ rgb: _hexRgb(c) });
+      });
+      sw.appendChild(b);
+    }
+    sheet.appendChild(sw);
+    const t = _throttled((h) => { it.color = _hsvHex(h); state.on = true; it.on = true; paint(); send({ rgb: _hexRgb(it.color) }); });
+    hueRange.addEventListener("input", () => { t.push(Number(hueRange.value)); touch(); });
+    hueRange.addEventListener("change", () => t.now(Number(hueRange.value)));
+    sheet.appendChild(hueRange);
+  }
+
+  paint();
+  touch();
+  document.body.appendChild(back);
+  return back;
 }
 
 export const EXTRA_RENDERERS = {

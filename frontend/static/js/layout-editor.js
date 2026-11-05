@@ -3206,7 +3206,27 @@ async function openSettingsPanel(section) {
         renderIntegrationsTab();
       });
 
-      cardHead.append(badge, dsName, editBtn, delBtn);
+      // ＋ Card: a card that uses this connection, without going back through the wizard
+      const cardType = meta.widgetType || (WIDGET_TYPES.some((w) => w.type === ds.type) ? ds.type : null);
+      const cardBtn = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "＋ Card" });
+      cardBtn.title = `Add a ${WIDGET_TYPES.find((w) => w.type === cardType)?.label || "widget"} card that uses this connection`;
+      cardBtn.addEventListener("click", async () => {
+        cardBtn.disabled = true;
+        try {
+          const created = await api.createWidget({ type: cardType, title: ds.name, config: {}, refresh_interval_sec: meta.refresh || 15, data_source_id: ds.id });
+          widgets.push(created);
+          reindex();
+          renderWidgets();
+          byId("settings-modal").close();
+          if (meta.configureAfter) openWidgetModal(created);
+          else toast(`Created ${created.title}. Drag it onto the board, or tap ＋ on it.`);
+        } catch (e) {
+          cardBtn.disabled = false;
+          toast(e.message || "Couldn't create the card.");
+        }
+      });
+
+      cardHead.append(badge, dsName, ...(cardType ? [cardBtn] : []), editBtn, delBtn);
       card.append(cardHead, dsUrl, secretBadge);
 
       // Inline edit panel (built lazily on first expand)
