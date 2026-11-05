@@ -1,8 +1,11 @@
 """REST + SSE routes."""
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
 
-from .. import db, secrets, integrations, backup, update_check
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
+
+from .. import alerts, db, favicons, secrets, integrations, backup, update_check
+from ..integrations import bookmarks as bookmarks_int, nowplaying as nowplaying_int, photos as photos_int, rest as rest_int
 from ..auth import generate_token, hash_password, verify_password
 from ..models import (
     BackupExportIn,
@@ -175,8 +178,115 @@ def put_widget(widget_id: int, body: WidgetUpdate, user: dict = Depends(current_
     w = db.update_widget(widget_id, body.model_dump(exclude_unset=True))
     if not w:
         raise HTTPException(404, "widget not found")
+    poller.force_poll(widget_id)
     poller._publish({"type": "widget_update", "widget_id": widget_id})
     return w
+
+
+@router.post("/widgets/{widget_id}/poll")
+async def poll_widget_now(widget_id: int, user: dict = Depends(current_user)):
+    env = await poller.poll_now(widget_id)
+    if env is None:
+        raise HTTPException(404, "widget not found")
+    return env
+
+
+def _with_source(widget: dict) -> dict | None:
+    if not widget.get("data_source_id"):
+        return None
+    ds = db.get_data_source(widget["data_source_id"], with_secret=True)
+    if ds:
+        ds["credentials"] = secrets.decrypt(ds.get("secret"))
+    return ds
+
+
+_IMG_CACHE = {"Cache-Control": "public, max-age=86400"}
+
+
+@router.get("/widgets/{widget_id}/favicon/{index}")
+async def widget_favicon(widget_id: int, index: int):
+    # Public — the display shows bookmark icons. Only URLs saved in this
+    # widget's config are fetched; the request never supplies a URL.
+    w = db.get_widget(widget_id)
+    if not w or w["type"] != "bookmarks":
+        raise HTTPException(404)
+    item = next((it for i, _g, it in bookmarks_int.iter_items(w.get("config") or {}) if i == index), None)
+    if not item or not item.get("url"):
+        raise HTTPException(404)
+    found = await favicons.get_icon(item["url"].strip())
+    if not found:
+        raise HTTPException(404, "no icon")
+    body, ctype = found
+    return Response(body, media_type=ctype, headers=_IMG_CACHE)
+
+
+@router.get("/widgets/{widget_id}/art/{index}")
+async def widget_art(widget_id: int, index: int):
+    # Public — the display shows now-playing artwork. The image path comes from
+    # the poller's own cached data, and the token stays on the server.
+    w = db.get_widget(widget_id)
+    if not w or w["type"] != "nowplaying":
+        raise HTTPException(404)
+    sessions = ((poller.cache.get(widget_id) or {}).get("data") or {}).get("sessions") or []
+    if not (0 <= index < len(sessions)) or not sessions[index].get("art_path"):
+        raise HTTPException(404)
+    ds = _with_source(w)
+    if not ds:
+        raise HTTPException(404)
+    found = await nowplaying_int.fetch_art(ds, sessions[index]["art_path"])
+    if not found:
+        raise HTTPException(404)
+    body, ctype = found
+    return Response(body, media_type=ctype, headers=_IMG_CACHE)
+
+
+@router.get("/widgets/{widget_id}/photo/{index}")
+def widget_photo(widget_id: int, index: int):
+    # Public — the photo frame. Serves only files from the configured folder's listing.
+    w = db.get_widget(widget_id)
+    if not w or w["type"] != "photos":
+        raise HTTPException(404)
+    folder = ((w.get("config") or {}).get("folder") or "").strip()
+    if not folder:
+        raise HTTPException(404)
+    try:
+        path = photos_int.photo_path(folder, index)
+    except (FileNotFoundError, PermissionError):
+        path = None
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(path, headers=_IMG_CACHE)
+
+
+class RestPreviewIn(BaseModel):
+    url: str
+    method: str = "GET"
+    body: str = ""
+    data_source_id: int | None = None
+
+
+@router.post("/rest/preview")
+async def rest_preview(body: RestPreviewIn, user: dict = Depends(current_user)):
+    """Run a REST widget's request once so the editor can show the response and
+    let you click values to pick their paths."""
+    ds = _with_source({"data_source_id": body.data_source_id}) if body.data_source_id else None
+    try:
+        status, doc = await rest_int.request(body.model_dump(), ds)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc) or type(exc).__name__}
+    return {"ok": status < 400, "status": status, "body": doc}
+
+
+@router.post("/notify/test")
+async def notify_test(user: dict = Depends(current_user)):
+    s = db.get_all_settings()
+    if not (s.get("notify_ntfy_url") or s.get("notify_webhook_url")):
+        raise HTTPException(400, "Set an ntfy URL or a webhook URL first.")
+    fake = {"id": 0, "title": "Test", "type": "test"}
+    await alerts.notifier._send(fake, [({"key": "test", "level": "warn", "value": None,
+                                         "message": "Test notification from TouchBoard"}, False)],
+                                (s.get("notify_ntfy_url") or "").strip(), (s.get("notify_webhook_url") or "").strip())
+    return {"ok": True}
 
 
 @router.delete("/widgets/{widget_id}", status_code=204)
@@ -232,14 +342,28 @@ def put_board(body: BoardUpdate, profile_id: int | None = None, user: dict = Dep
 
 
 @router.get("/board/full")
-def get_board_full(profile_id: int | None = None):
-    # Public — used by the display page
-    pid = profile_id if profile_id is not None else db.get_active_profile_id()
+def get_board_full(profile_id: int | None = None, profile: str | None = None):
+    # Public — used by the display page. `profile` (id or name) pins a screen to
+    # one board: /display?profile=kitchen
+    pid = profile_id
+    if pid is None and profile:
+        pid = db.find_profile_id(profile)
+        if pid is None:
+            raise HTTPException(404, f"no profile named {profile!r}")
+    if pid is None:
+        pid = db.get_active_profile_id()
     return {
         "board": db.get_profile(pid),
         "stacks": db.list_stacks(pid),
         "widgets": db.list_widgets(pid),
     }
+
+
+@router.post("/board/cleanup")
+def cleanup_board(profile_id: int | None = None, user: dict = Depends(current_user)):
+    """Delete stacks no page uses any more (after a page is deleted)."""
+    pid = profile_id if profile_id is not None else db.get_active_profile_id()
+    return {"removed": db.delete_orphan_stacks(pid)}
 
 
 # ── profiles ──────────────────────────────────────────────────────────────────
