@@ -482,3 +482,4 @@ html[data-app-theme] body.login-page .login-btn { background: var(--ui-accent); 
 .insp-checks { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .insp-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; text-transform: capitalize; white-space: nowrap; }
 .insp-warn { color: #f59e0b; }
+.settings-ds-cardsel { width: auto; padding: 4px 8px; font-size: 13px; }

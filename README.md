@@ -50,7 +50,7 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 | **Stream**          | Live camera feed via HLS or RTSP |
 | **Plex / Jellyfin** | Now playing: artwork, progress, who's watching and on which device. Artwork is proxied so the token stays on the server |
 | **Frigate**         | Camera pop-ups on new detections (polls Frigate's events API every 2 s; works with the internal port or a Frigate login). The camera plays straight from go2rtc |
-| **Home Assistant**  | Lights: tap a tile to switch a light (or a smart plug), hold it for brightness, warm/cool white and colour; grouped by area with an All on / All off button, and tiles glow in the light's colour. The token stays on the server, and the display can only switch the lights on that card (optionally only when signed in) |
+| **Home Assistant**  | **Lights**: tap a tile to switch a light (or a smart plug), hold it for brightness, warm/cool white and colour; grouped by area with an All on / All off button, and tiles glow in the light's colour. **Thermostat**: current temperature, − / + setpoints (taps are bundled into one change), heat/cool/auto/off and fan mode. **TV remote**: power, arrows/OK, Back, Home, play/pause, volume and one-tap apps or inputs (built for Roku TVs). The token stays on the server, and each card can only control its own devices (optionally only when signed in) |
 
 ---
 

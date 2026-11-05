@@ -491,6 +491,185 @@ export function renderLights(widget, data) {
   return wrap;
 }
 
+// ── Thermostat and TV remote (Home Assistant) ───────────────────────────────
+
+function _control(widget, body) {
+  return fetch(`/api/widgets/${widget.id}/control`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  });
+}
+const _isLive = () => !document.body.classList.contains("layout-editor-page");
+function _btn(cls, html, label) {
+  const b = el("button", `${cls} tb-ctrl`);
+  b.type = "button";
+  b.dataset.interactive = "1";
+  if (label) b.setAttribute("aria-label", label);
+  b.innerHTML = html;
+  return b;
+}
+function _flash(b, ok = true) {
+  b.classList.remove("is-pressed", "lt-fail"); void b.offsetWidth;
+  b.classList.add(ok ? "is-pressed" : "lt-fail");
+  setTimeout(() => b.classList.remove("is-pressed"), 180);
+}
+
+// Setpoint taps wait 1.5 s for more taps, then go out as one change (Honeywell's
+// cloud rate-limits). The card keeps showing the new value until Home Assistant
+// reports it back, so a refresh in between doesn't snap it back.
+const _tstat = new Map();   // widget id → { target|low|high, until, timer, error }
+const MODE_LABEL = { off: "Off", heat: "Heat", cool: "Cool", heat_cool: "Auto", auto: "Auto", fan_only: "Fan", dry: "Dry" };
+const ACTION_LABEL = { heating: "Heating", cooling: "Cooling", idle: "Idle", off: "Off", fan: "Fan only", drying: "Drying", preheating: "Preheating" };
+
+export function renderThermostat(widget, data) {
+  const wrap = el("div", "w-tstat");
+  if (!data) { wrap.appendChild(el("div", "w-empty", "Loading thermostat…")); return wrap; }
+  const cfg = widget.config || {};
+  const live = _isLive();
+  let p = _tstat.get(widget.id);
+  if (p) {   // drop pending values Home Assistant has caught up with, or that are too old
+    for (const k of ["target", "low", "high"]) if (p[k] != null && data[k] === p[k]) delete p[k];
+    if (Date.now() > p.until || (p.target == null && p.low == null && p.high == null && !p.timer)) { _tstat.delete(widget.id); p = null; }
+  }
+  const val = (k) => (p && p[k] != null ? p[k] : data[k]);
+  const deg = String(data.unit || "").includes("C") ? "°C" : "°";
+  const fmt = (v) => (v == null ? "–" : String(Math.round(v * 2) / 2));
+  wrap.dataset.action = data.action || "idle";
+  wrap.dataset.mode = data.mode || "off";
+
+  const now = el("div", "ts-now");
+  now.append(el("div", "ts-cur", `${fmt(data.current)}${deg}`),
+    el("div", "ts-sub", [ACTION_LABEL[data.action] || (data.mode === "off" ? "Off" : "Idle"), data.humidity != null ? `${Math.round(data.humidity)}% humidity` : ""].filter(Boolean).join(" · ")));
+
+  const sets = el("div", "ts-sets");
+  const send = () => {
+    const st = _tstat.get(widget.id);
+    if (!st) return;
+    st.timer = null;
+    const body = st.target != null ? { action: "temperature", value: st.target }
+      : { action: "range", low: st.low ?? data.low, high: st.high ?? data.high };
+    _control(widget, body).catch((e) => { _tstat.delete(widget.id); wrap.querySelector(".ts-err").textContent = e.message; });
+  };
+  const setpoint = (label, key) => {
+    const box = el("div", "ts-set");
+    const v = el("div", "ts-val", `${fmt(val(key))}${deg}`);
+    const step = data.step || 1, lo = data.min ?? 40, hi = data.max ?? 95;
+    const bump = (dir) => {
+      if (!live || !data.available) return;
+      const st = _tstat.get(widget.id) || {};
+      let n = Math.round(((st[key] ?? val(key) ?? data.current ?? 70) + dir * step) * 2) / 2;
+      n = Math.max(lo, Math.min(hi, n));
+      if (key === "low" && n >= (st.high ?? val("high") ?? hi)) return;
+      if (key === "high" && n <= (st.low ?? val("low") ?? lo)) return;
+      st[key] = n;
+      st.until = Date.now() + 90000;
+      clearTimeout(st.timer);
+      st.timer = setTimeout(send, 1500);
+      _tstat.set(widget.id, st);
+      v.textContent = `${fmt(n)}${deg}`;
+      box.classList.add("is-pending");
+    };
+    const minus = _btn("ts-step", "−", `Lower ${label.toLowerCase()}`);
+    const plus = _btn("ts-step", "+", `Raise ${label.toLowerCase()}`);
+    minus.addEventListener("click", (e) => { e.stopPropagation(); bump(-1); });
+    plus.addEventListener("click", (e) => { e.stopPropagation(); bump(1); });
+    if (p && p[key] != null) box.classList.add("is-pending");
+    box.append(el("div", "ts-lbl", label), minus, v, plus);
+    return box;
+  };
+  if (data.mode === "heat_cool") sets.append(setpoint("Heat to", "low"), setpoint("Cool to", "high"));
+  else if (data.mode && data.mode !== "off" && data.target != null) sets.append(setpoint(data.mode === "cool" ? "Cool to" : "Heat to", "target"));
+  else sets.appendChild(el("div", "ts-off", data.mode === "off" ? "System off" : ""));
+
+  const top = el("div", "ts-top");
+  top.append(now, sets);
+  wrap.append(top, el("div", "ts-err"));
+
+  const row = (label, options, current, action) => {
+    if (!options.length) return null;
+    const r = el("div", "ts-row");
+    if (label) r.appendChild(el("span", "ts-row-lbl", label));
+    for (const m of options) {
+      const b = _btn("ts-pill" + (m === current ? " is-active" : ""), MODE_LABEL[m] || m.replace(/_/g, " "));
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!live || !data.available || m === current) return;
+        r.querySelectorAll(".ts-pill").forEach((x) => x.classList.toggle("is-active", x === b));
+        _control(widget, { action, value: m }).catch((err) => { _flash(b, false); wrap.querySelector(".ts-err").textContent = err.message; });
+      });
+      r.appendChild(b);
+    }
+    return r;
+  };
+  const modes = row("", data.modes || [], data.mode, "mode");
+  if (modes) wrap.appendChild(modes);
+  if (cfg.show_fan !== false) { const fan = row("Fan", data.fan_modes || [], data.fan, "fan"); if (fan) wrap.appendChild(fan); }
+  if (!data.available) wrap.classList.add("is-off-line");
+  return wrap;
+}
+
+const TV_ICON = {
+  power: '<svg viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.6a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  back: '<svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M4 12h11a5 5 0 0 1 0 10h-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  home: '<svg viewBox="0 0 24 24"><path d="m3 11 9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  play: '<svg viewBox="0 0 24 24"><path d="M5 5v14l8-7-8-7Zm11 0v14M20 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  vdown: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4Zm13 3h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  vup: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4Zm13 3h4m-2-2v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  mute: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4Zm12 0 5 6m0-6-5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+export function renderTv(widget, data) {
+  const wrap = el("div", "w-tv");
+  if (!data) { wrap.appendChild(el("div", "w-empty", "Loading TV…")); return wrap; }
+  const live = _isLive();
+  const go = (b, body) => (e) => {
+    e.stopPropagation();
+    if (!live) return;
+    _flash(b);
+    _control(widget, body).catch((err) => { _flash(b, false); b.title = err.message; });
+  };
+  const key = (cls, html, k, label) => { const b = _btn(cls, html, label); b.addEventListener("click", go(b, { action: "key", value: k })); return b; };
+
+  const head = el("div", "tv-head");
+  const power = _btn("tv-power" + (data.on ? " is-on" : ""), TV_ICON.power, data.on ? "Turn off" : "Turn on");
+  power.addEventListener("click", go(power, { action: "power" }));
+  const titles = el("div", "tv-titles");
+  titles.append(el("b", "", data.name), el("span", "tv-app", !data.available ? "Unavailable" : data.on ? (data.app || "On") : "Off"));
+  head.append(power, titles);
+  wrap.appendChild(head);
+
+  const main = el("div", "tv-main");
+  if (data.has_remote) {
+    const pad = el("div", "tv-pad");
+    pad.append(el("span"), key("tv-k tv-arrow", "▲", "up", "Up"), el("span"),
+      key("tv-k tv-arrow", "◀", "left", "Left"), key("tv-k tv-ok", "OK", "select", "OK"), key("tv-k tv-arrow", "▶", "right", "Right"),
+      el("span"), key("tv-k tv-arrow", "▼", "down", "Down"), el("span"));
+    const side = el("div", "tv-side");
+    side.append(key("tv-k", TV_ICON.back, "back", "Back"), key("tv-k", TV_ICON.home, "home", "Home"), key("tv-k", TV_ICON.play, "play", "Play / pause"));
+    main.append(pad, side);
+  }
+  const vol = el("div", "tv-vol");
+  const mute = data.has_remote ? key("tv-k", TV_ICON.mute, "volume_mute", "Mute") : _btn("tv-k", TV_ICON.mute, "Mute");
+  if (!data.has_remote) mute.addEventListener("click", go(mute, { action: "mute" }));
+  vol.append(key("tv-k", TV_ICON.vup, "volume_up", "Volume up"), mute, key("tv-k", TV_ICON.vdown, "volume_down", "Volume down"));
+  main.appendChild(vol);
+  wrap.appendChild(main);
+
+  if (data.favorites?.length) {
+    const favs = el("div", "tv-favs");
+    for (const f of data.favorites) {
+      const b = _btn("tv-fav" + (data.on && data.app === f ? " is-active" : ""), "");
+      b.textContent = f;
+      b.addEventListener("click", go(b, { action: "source", value: f }));
+      favs.appendChild(b);
+    }
+    wrap.appendChild(favs);
+  }
+  if (!data.available) wrap.classList.add("is-off-line");
+  return wrap;
+}
+
 // ── Light panel: hold a tile for brightness, white temperature and colour ────
 
 const SWATCHES = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#0a84ff", "#5e5ce6", "#bf5af2", "#ff2d92"];
@@ -616,6 +795,8 @@ export function openLightPanel(widget, it) {
 
 export const EXTRA_RENDERERS = {
   lights: renderLights,
+  thermostat: renderThermostat,
+  tv: renderTv,
   bookmarks: renderBookmarks,
   rest: renderRest,
   nowplaying: renderNowPlaying,
