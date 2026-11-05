@@ -433,6 +433,16 @@ body.layout-editor-page .settings-section-head { color: var(--ui-text); }
 .ds-gallery-card small { color: var(--ui-muted); font-size: 11.5px; line-height: 1.35; }
 .ds-thumb { position: relative; overflow: hidden; border-radius: 6px; background: #060912; }
 .ds-thumb-board { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: grid; padding: 5px; gap: 10px; pointer-events: none; }
+/* Thumbnails are still pictures: no motion and no backdrop blur (invisible at
+   this size, but each one is a full-resolution board for the GPU). */
+.ds-thumb { contain: strict; }
+.ds-thumb-board, .ds-thumb-board *, .ds-thumb-board::before, .ds-thumb-board::after,
+.ds-thumb-board *::before, .ds-thumb-board *::after { animation: none !important; transition: none !important; }
+.ds-thumb-board :is(.stack-cell, .layout-stack-card, .widget) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+/* The editing canvas holds still too: a moving background under blurred-glass
+   cards (Aurora) makes the GPU re-blur every card on every frame. */
+body.layout-editor-page #preview-viewport::before,
+body.layout-editor-page #preview-viewport::after { animation: none !important; }
 
 /* narrow windows: tuck the panels away */
 @media (max-width: 1100px) {

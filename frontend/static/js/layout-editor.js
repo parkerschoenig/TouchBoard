@@ -3801,6 +3801,7 @@ async function openSettingsPanel(section) {
     const update = () => { applyToPreview(); saveSettings(); };
 
     // ── buildControls: clears and rebuilds the controls pane ─────────────────
+    let galSec = null;
     const buildControls = () => {
       controlsPane.innerHTML = "";
 
@@ -3866,32 +3867,37 @@ async function openSettingsPanel(section) {
         return { row, tog };
       }
 
-      // ── Display theme gallery (live thumbnails of the current page) ───────
-      const galSec = document.createElement("div");
-      galSec.className = "ds-section";
-      galSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Display theme" }));
-      const gal = document.createElement("div");
-      gal.className = "ds-gallery";
-      for (const dt of DISPLAY_THEMES) {
-        const preset = THEME_PRESETS.find((p) => p.key === dt.preset) || {};
-        const active = theme.style === dt.style && st.card_bg_color === preset.card_bg_color && st.card_accent_color === preset.card_accent_color;
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "ds-gallery-card" + (active ? " active" : "");
-        b.append(designerThumb(dt, preset), Object.assign(document.createElement("b"), { textContent: dt.label }),
-          Object.assign(document.createElement("small"), { textContent: dt.blurb }));
-        b.addEventListener("click", () => {
-          const { key, label, accent, ...cardFields } = preset;
-          Object.assign(st, cardFields, { board_bg_color: dt.board_bg_color });
-          theme.style = dt.style; theme.font = dt.font; theme.shape = "theme"; theme.pattern = "none";
-          previewBoard.style.backgroundColor = dt.board_bg_color;
-          byId("preview-viewport").style.backgroundColor = dt.board_bg_color;
-          update();
-          buildControls();
-        });
-        gal.appendChild(b);
+      // ── Display theme gallery (thumbnails of the current page) ────────────
+      // Built once per Designer opening: each thumbnail is a full copy of the
+      // page, far too heavy to rebuild on every click.
+      if (!galSec) {
+        galSec = document.createElement("div");
+        galSec.className = "ds-section";
+        galSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Display theme" }));
+        const gal = document.createElement("div");
+        gal.className = "ds-gallery";
+        for (const dt of DISPLAY_THEMES) {
+          const preset = THEME_PRESETS.find((p) => p.key === dt.preset) || {};
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "ds-gallery-card";
+          b._isActive = () => theme.style === dt.style && st.card_bg_color === preset.card_bg_color && st.card_accent_color === preset.card_accent_color;
+          b.append(designerThumb(dt, preset), Object.assign(document.createElement("b"), { textContent: dt.label }),
+            Object.assign(document.createElement("small"), { textContent: dt.blurb }));
+          b.addEventListener("click", () => {
+            const { key, label, accent, ...cardFields } = preset;
+            Object.assign(st, cardFields, { board_bg_color: dt.board_bg_color });
+            theme.style = dt.style; theme.font = dt.font; theme.shape = "theme"; theme.pattern = "none";
+            previewBoard.style.backgroundColor = dt.board_bg_color;
+            byId("preview-viewport").style.backgroundColor = dt.board_bg_color;
+            update();
+            buildControls();
+          });
+          gal.appendChild(b);
+        }
+        galSec.appendChild(gal);
       }
-      galSec.appendChild(gal);
+      for (const b of galSec.querySelectorAll(".ds-gallery-card")) b.classList.toggle("active", b._isActive());
       controlsPane.appendChild(galSec);
 
       // ── Board Background section ──────────────────────────────────────────
@@ -4812,7 +4818,7 @@ function designerThumb(dt, preset) {
     cell.style.gridRow = `${n.y + 1} / span ${n.h}`;
     if (w) {
       const body = Object.assign(document.createElement("div"), { className: "display-widget-body" });
-      body.appendChild(renderWidget(w, liveData[w.id] || null));
+      body.appendChild(renderWidget(w, liveData[w.id] || null, { still: true }));
       cell.appendChild(body);
     }
     b.appendChild(cell);

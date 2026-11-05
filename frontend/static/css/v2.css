@@ -399,3 +399,7 @@ body.is-night[data-style="aurora"] .board::before, html[data-style="aurora"] bod
     radial-gradient(34% 44% at 52% 86%, rgba(37, 99, 235, .52), transparent 70%),
     radial-gradient(24% 34% at 92% 74%, rgba(219, 39, 119, .40), transparent 70%);
 }
+
+/* stream placeholder used in previews */
+.w-stream-still { display: grid; place-items: center; height: 100%; min-height: 40px; background: rgba(0, 0, 0, .55); border-radius: 8px; }
+.w-stream-still .w-empty { color: #fb7185; font-size: 12px; letter-spacing: .06em; }
