@@ -137,6 +137,17 @@ function _openProxmoxColorPicker(anchor, widget, bodyEl) {
   });
 }
 
+// ── Multi-page widgets ───────────────────────────────────────────────────────
+// Weather, NetBox and TrueNAS have several pages. They expose them on their
+// root element so the display's cycle timer can step through them.
+function exposePages(wrap, pages, view, show) {
+  if (pages.length < 2) return;
+  wrap.classList.add("w-paged");
+  wrap.dataset.pageCount = String(pages.length);
+  wrap.dataset.pageIndex = String(Math.max(0, pages.indexOf(view)));
+  wrap._showPage = (i) => show(pages[((i % pages.length) + pages.length) % pages.length]);
+}
+
 // ── Shared view-dots builder ─────────────────────────────────────────────────
 
 function buildViewDots(views, currentView, onSelect) {
@@ -237,17 +248,13 @@ function renderWeather(widget, data) {
   }
 
   const weatherViews = ["current", "hourly", "daily"];
-  wrap.appendChild(buildViewDots(weatherViews, view, (v) => {
-    _weatherView.set(widget.id, v);
-    wrap.replaceWith(renderWeather(widget, data));
-  }));
-
+  const show = (v) => { _weatherView.set(widget.id, v); wrap.replaceWith(renderWeather(widget, data)); };
+  wrap.appendChild(buildViewDots(weatherViews, view, show));
   wrap.addEventListener("click", (e) => {
     e.stopPropagation();
-    const next = view === "current" ? "hourly" : view === "hourly" ? "daily" : "current";
-    _weatherView.set(widget.id, next);
-    wrap.replaceWith(renderWeather(widget, data));
+    show(weatherViews[(weatherViews.indexOf(view) + 1) % weatherViews.length]);
   });
+  exposePages(wrap, weatherViews, view, show);
 
   return wrap;
 }
@@ -596,15 +603,13 @@ function renderNetBox(widget, data) {
   }
 
   if (pages.length > 1) {
-    wrap.appendChild(buildViewDots(pages, view, (v) => {
-      _netboxView.set(widget.id, v);
-      wrap.replaceWith(renderNetBox(widget, data));
-    }));
+    const show = (v) => { _netboxView.set(widget.id, v); wrap.replaceWith(renderNetBox(widget, data)); };
+    wrap.appendChild(buildViewDots(pages, view, show));
     wrap.addEventListener("click", (e) => {
       e.stopPropagation();
-      _netboxView.set(widget.id, pages[(pages.indexOf(view) + 1) % pages.length]);
-      wrap.replaceWith(renderNetBox(widget, data));
+      show(pages[(pages.indexOf(view) + 1) % pages.length]);
     });
+    exposePages(wrap, pages, view, show);
   }
 
   return wrap;
@@ -805,15 +810,13 @@ function renderTruenas(widget, data, envelope) {
 
   // ── Dot navigation ────────────────────────────────────────────────────────
   if (pages.length > 1) {
-    wrap.appendChild(buildViewDots(pages, view, (v) => {
-      _tnView.set(widget.id, v);
-      wrap.replaceWith(renderTruenas(widget, data, envelope));
-    }));
+    const show = (v) => { _tnView.set(widget.id, v); wrap.replaceWith(renderTruenas(widget, data, envelope)); };
+    wrap.appendChild(buildViewDots(pages, view, show));
     wrap.addEventListener("click", (e) => {
       e.stopPropagation();
-      _tnView.set(widget.id, pages[(pages.indexOf(view) + 1) % pages.length]);
-      wrap.replaceWith(renderTruenas(widget, data, envelope));
+      show(pages[(pages.indexOf(view) + 1) % pages.length]);
     });
+    exposePages(wrap, pages, view, show);
   }
 
   return wrap;
