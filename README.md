@@ -15,6 +15,7 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 - **Multi-page boards** - swipe, arrow keys, or rotate pages on a timer
 - **Alerts** - thresholds per widget metric (CPU, latency, pool usage, any REST value…), sparklines of recent history, a highlighted card, an optional jump to it, and push notifications via ntfy or a webhook
 - **Built for always-on screens** - night schedule with dimming, burn-in pixel shift, stale-data indicators, an offline banner and screen wake lock
+- **Camera pop-ups** - when Frigate detects a person (or a car, a dog…), the screen shows that camera full screen for a few seconds, then goes back. Pick the cameras, detections, duration and a per-camera quiet time for each screen
 - **Per-screen boards** - `/display?profile=kitchen` pins a screen to one profile, so each screen can show its own board
 - **Edit on the display** - long-press the display while signed in to move, resize, add or remove cards in place
 - **Live data via SSE** - all widget data is pushed to the display in real time over Server-Sent Events
@@ -48,6 +49,7 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 | **Google Calendar** | Upcoming events from Google Calendar or any ICS feed |
 | **Stream**          | Live camera feed via HLS or RTSP |
 | **Plex / Jellyfin** | Now playing: artwork, progress, who's watching and on which device. Artwork is proxied so the token stays on the server |
+| **Frigate**         | Camera pop-ups on new detections (polls Frigate's events API every 2 s; works with the internal port or a Frigate login). The camera plays straight from go2rtc |
 | **Home Assistant**  | Lights: tap a tile to switch a light (or a smart plug), hold it for brightness, warm/cool white and colour; grouped by area with an All on / All off button, and tiles glow in the light's colour. The token stays on the server, and the display can only switch the lights on that card (optionally only when signed in) |
 
 ---

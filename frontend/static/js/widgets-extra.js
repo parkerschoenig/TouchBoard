@@ -518,6 +518,7 @@ function _throttled(send) {
 export function openLightPanel(widget, it) {
   document.querySelector(".lt-sheet-backdrop")?.remove();
   const back = el("div", "lt-sheet-backdrop");
+  back.dataset.holdsPage = "1";   // the display stays on this page while it's open
   const sheet = el("div", "lt-sheet");
   sheet.setAttribute("role", "dialog");
   sheet.setAttribute("aria-label", it.name);
@@ -529,7 +530,7 @@ export function openLightPanel(widget, it) {
   const touch = () => { clearTimeout(idle); idle = setTimeout(close, 20000); };   // don't leave a kiosk covered
   document.addEventListener("keydown", onKey);
   back.addEventListener("click", (e) => { if (e.target === back) close(); });
-  back.addEventListener("pointerdown", (e) => { e.stopPropagation(); touch(); });
+  back.addEventListener("pointerdown", touch);
 
   const state = { on: it.on, bri: it.brightness ?? 100, kelvin: it.kelvin, hue: it.hue ?? (it.color ? _hexHue(it.color) : 30) };
   const status = el("span", "lt-sheet-status");

@@ -19,11 +19,14 @@
 //   pixel_shift         nudge the board a few pixels every few minutes
 //   night               {enabled, start "22:00", end "07:00", brightness 0.35, page}
 //   edit_on_display     long-press to rearrange cards (needs a signed-in session)
+//   camera_popup        {enabled, labels, cameras, seconds, cooldown}: show a camera
+//                       full screen when Frigate detects something (camera-popup.js)
 
 import { renderWidget } from "./widgets.js";
 import { applyTheme, applyCardStyle } from "./theme.js";
 import { timeAgo } from "./primitives.js";
 import { initDisplayEdit } from "./display-edit.js";
+import { createCameraPopups } from "./camera-popup.js";
 
 const params = new URLSearchParams(location.search);
 const PROFILE_REF = params.get("profile");
@@ -42,6 +45,7 @@ let currentPageIdx = 0;
 let columns        = 24;
 let rows           = 16;
 let options        = {};
+const cameraPopups = createCameraPopups(() => options);
 let widgetsById    = {};
 let stackById      = {};
 const envelopeCache = {};
@@ -341,7 +345,7 @@ function onEnvelope(env) {
 }
 
 function takeover(widgetId) {
-  if (!opt("alert_takeover", true) || editing) return;
+  if (!opt("alert_takeover", true) || editing || pageHeld()) return;
   for (let p = 0; p < pages.length; p++) {
     for (const node of pages[p].layout || []) {
       const stack = stackById[node.stack_id];
@@ -383,6 +387,7 @@ function connectSSE() {
     else if (env.type === "widget_update") refreshStructure();
     else if (env.type === "active_profile_changed") { if (!PROFILE_REF) refreshStructure(); }
     else if (env.type === "config_restored") window.location.reload();
+    else if (env.type === "camera_event") cameraPopups.onEvent(env);
     else if (env.widget_id != null) onEnvelope(env);
   };
 }
@@ -395,7 +400,7 @@ function goToPage(idx) {
 
 function setupNavigation() {
   document.addEventListener("keydown", (e) => {
-    if (editing) return;
+    if (editing || pageHeld() || e.target.closest?.("input, textarea, select")) return;
     if (e.key === "ArrowRight") { lastInteraction = now(); goToPage(currentPageIdx + 1); }
     if (e.key === "ArrowLeft")  { lastInteraction = now(); goToPage(currentPageIdx - 1); }
   });
@@ -420,9 +425,14 @@ function setupNavigation() {
   });
 
   let sx = null, sy = null;
-  document.addEventListener("touchstart", (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; lastInteraction = now(); }, { passive: true });
+  document.addEventListener("touchstart", (e) => {
+    lastInteraction = now();
+    // dragging a slider or anything in an overlay isn't a page swipe
+    if (e.target.closest?.("input, [data-holds-page]")) { sx = null; return; }
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+  }, { passive: true });
   document.addEventListener("touchend", (e) => {
-    if (sx === null || editing) { sx = null; return; }
+    if (sx === null || editing || pageHeld()) { sx = null; return; }
     const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
     sx = sy = null;
     if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
@@ -464,9 +474,15 @@ function pixelShift() {
   boardEl.style.translate = `${x}px ${y}px`;
 }
 
+// Something on screen needs the page to stay put: the light panel, a camera
+// pop-up. While one is open nothing rotates, cycles or jumps, and the pause
+// after a touch starts again when it closes.
+const pageHeld = () => !!document.querySelector("[data-holds-page]");
+
 function ticker() {
   if (editing || !lastFull) return;
   const t = now();
+  if (pageHeld()) { lastInteraction = t; return; }
   // auto-cycling stacks
   const cycleMs = Math.max(4, Number(opt("stack_cycle_sec", 12))) * 1000;
   const cycleAll = !!opt("stack_cycle", false);

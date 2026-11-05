@@ -48,6 +48,60 @@ function btn(text, onClick, cls = "") {
   return h("button", { type: "button", class: "insp-btn " + cls, onclick: onClick }, text);
 }
 
+// ── camera pop-ups: Frigate connections and cameras, fetched once a minute ───
+const POP_LABELS = [["person", "People"], ["car", "Cars"], ["dog", "Dogs"], ["cat", "Cats"], ["bicycle", "Bikes"], ["package", "Packages"]];
+let _frigate = { at: 0, promise: null };
+function frigateInfo() {
+  if (_frigate.promise && Date.now() - _frigate.at < 60000) return _frigate.promise;
+  _frigate.at = Date.now();
+  _frigate.promise = (async () => {
+    const sources = (await (await fetch("/api/datasources")).json()).filter((d) => d.type === "frigate");
+    if (!sources.length) return { sources };
+    const cams = await (await fetch(`/api/frigate/${sources[0].id}/cameras`)).json();
+    return { sources, source: sources[0], ...cams };
+  })().catch((e) => ({ sources: [], error: e.message }));
+  return _frigate.promise;
+}
+
+function checks(options, picked, onChange) {
+  const set = new Set(picked);
+  return h("div", { class: "insp-checks" }, ...options.map(([v, label]) =>
+    h("label", { class: "insp-check" },
+      h("input", { type: "checkbox", checked: set.has(v), onchange: (e) => { e.target.checked ? set.add(v) : set.delete(v); onChange([...set]); } }),
+      h("span", { text: label }))));
+}
+
+function cameraSection(o, set) {
+  const cp = { enabled: false, labels: ["person"], cameras: [], seconds: 30, cooldown: 120, ...(o.camera_popup || {}) };
+  const save = (k, v) => { cp[k] = v; set("camera_popup", { ...cp }); };
+  const camsEl = h("div", { class: "insp-checks" }, h("span", { class: "insp-hint", text: "Loading cameras from Frigate…" }));
+  const status = h("span", { class: "insp-hint" });
+  let info = null;
+  const test = btn("Test pop-up", async () => {
+    if (!info?.source) return;
+    const camera = cp.cameras[0] || info.cameras?.[0];
+    if (!camera) { status.textContent = "No cameras found in Frigate."; return; }
+    const r = await fetch("/api/frigate/test", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: info.source.id, camera, label: cp.labels[0] || "person" }) });
+    status.textContent = r.ok ? `Sent a test pop-up for ${camera} to every open screen.` : "Couldn't send the test.";
+  });
+  frigateInfo().then((res) => {
+    info = res;
+    camsEl.innerHTML = "";
+    if (!res.sources?.length) { camsEl.append(h("span", { class: "insp-hint", text: "Add a Frigate connection under Settings → Manage Integrations first." })); return; }
+    if (res.ok === false || res.error) { camsEl.append(h("span", { class: "insp-hint insp-warn", text: `Frigate: ${res.error}` })); return; }
+    camsEl.replaceWith(checks((res.cameras || []).map((c) => [c, c.replace(/_/g, " ")]), cp.cameras, (list) => save("cameras", list)));
+  });
+  return section("Camera pop-ups",
+    toggle("Pop up a camera when Frigate sees something", !!cp.enabled, (v) => save("enabled", v),
+      "Shows the camera full screen over any page, then goes back. Tap it to close early."),
+    row("Detections", checks(POP_LABELS, cp.labels, (list) => save("labels", list.length ? list : ["person"]))),
+    row("Cameras", camsEl, "None ticked = every camera."),
+    row("Show for", h("div", { class: "insp-inline" }, num(cp.seconds, { min: 5, onChange: (v) => save("seconds", Math.max(5, v || 30)) }), h("span", { text: "s" }))),
+    row("Then quiet for", h("div", { class: "insp-inline" }, num(cp.cooldown, { min: 0, onChange: (v) => save("cooldown", Math.max(0, v ?? 120)) }), h("span", { text: "s per camera" }))),
+    h("div", { class: "insp-btns" }, test), status);
+}
+
 export function createInspector(root, ctx) {
   let lastKey = null;
 
@@ -198,6 +252,8 @@ export function createInspector(root, ctx) {
       toggle("Keep the screen awake", o.wake_lock !== false, (v) => set("wake_lock", v)),
       toggle("Shift pixels against burn-in", !!o.pixel_shift, (v) => set("pixel_shift", v)),
       toggle("Allow editing on the display", o.edit_on_display !== false, (v) => set("edit_on_display", v), "Long-press the display while signed in.")));
+
+    out.push(cameraSection(o, set));
 
     out.push(section("Night mode",
       toggle("Dim on a schedule", !!night.enabled, (v) => setNight("enabled", v)),
