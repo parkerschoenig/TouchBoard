@@ -286,6 +286,8 @@ class LightsActionIn(BaseModel):
     action: Literal["toggle", "turn_on", "turn_off"]
     entity_ids: list[str]
     brightness: Optional[int] = None   # 1–100, with turn_on
+    rgb: Optional[list[int]] = None    # [r, g, b] 0–255, with turn_on
+    kelvin: Optional[int] = None       # white colour temperature, with turn_on
 
 
 @router.post("/widgets/{widget_id}/lights")
@@ -301,6 +303,14 @@ async def lights_action(widget_id: int, body: LightsActionIn, tb_session: str = 
         raise HTTPException(401, "Sign in to TouchBoard to control these lights.")
     shown = {e.get("id") for e in ((poller.cache.get(widget_id) or {}).get("data") or {}).get("entities") or []}
     allowed = shown | {e for e in cfg.get("entities") or [] if isinstance(e, str)}
+    if body.rgb is not None and (len(body.rgb) != 3 or any(not 0 <= c <= 255 for c in body.rgb)):
+        raise HTTPException(422, "rgb must be three numbers from 0 to 255")
+    if body.kelvin is not None and not 1000 <= body.kelvin <= 12000:
+        raise HTTPException(422, "kelvin must be between 1000 and 12000")
+    if body.rgb is not None and body.kelvin is not None:
+        raise HTTPException(400, "Send a colour or a white temperature, not both.")
+    if (body.rgb is not None or body.kelvin is not None or body.brightness is not None) and body.action != "turn_on":
+        raise HTTPException(400, "Brightness and colour go with turn_on.")
     ids = [e for e in dict.fromkeys(body.entity_ids) if e in allowed and e.split(".", 1)[0] in ha_int.CONTROLLABLE]
     if not ids:
         raise HTTPException(403, "Those lights aren't on this card.")
@@ -308,7 +318,7 @@ async def lights_action(widget_id: int, body: LightsActionIn, tb_session: str = 
     if not ds or ds.get("type") != "homeassistant":
         raise HTTPException(400, "This card has no Home Assistant connection.")
     try:
-        await ha_int.act(ds, ids, body.action, body.brightness)
+        await ha_int.act(ds, ids, body.action, body.brightness, body.rgb, body.kelvin)
     except Exception as exc:
         raise HTTPException(502, str(exc) or type(exc).__name__)
     poller.force_poll(widget_id)

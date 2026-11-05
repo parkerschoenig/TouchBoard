@@ -48,7 +48,7 @@ A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastruc
 | **Google Calendar** | Upcoming events from Google Calendar or any ICS feed |
 | **Stream**          | Live camera feed via HLS or RTSP |
 | **Plex / Jellyfin** | Now playing: artwork, progress, who's watching and on which device. Artwork is proxied so the token stays on the server |
-| **Home Assistant**  | Lights: tap a tile to switch a light (or a smart plug), grouped by area with an All on / All off button; tiles glow in the light's colour. The token stays on the server, and the display can only switch the lights on that card (optionally only when signed in) |
+| **Home Assistant**  | Lights: tap a tile to switch a light (or a smart plug), hold it for brightness, warm/cool white and colour; grouped by area with an All on / All off button, and tiles glow in the light's colour. The token stays on the server, and the display can only switch the lights on that card (optionally only when signed in) |
 
 ---
 

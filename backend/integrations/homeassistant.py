@@ -76,7 +76,8 @@ def _item(s: dict, areas: dict) -> dict:
     st = s.get("state")
     on = st == "on"
     b = a.get("brightness")
-    modes = a.get("supported_color_modes") or []
+    modes = set(a.get("supported_color_modes") or [])
+    hs = a.get("hs_color")
     return {
         "id": s["entity_id"],
         "name": a.get("friendly_name") or s["entity_id"],
@@ -86,6 +87,13 @@ def _item(s: dict, areas: dict) -> dict:
         "brightness": round(b / 255 * 100) if on and isinstance(b, (int, float)) else None,
         "color": _hex(a.get("rgb_color")) if on else None,
         "dimmable": any(m != "onoff" for m in modes),
+        # what the long-press panel offers: colour, a warm↔cool white range, or neither
+        "color_capable": bool(modes & {"hs", "xy", "rgb", "rgbw", "rgbww"}),
+        "temp_capable": "color_temp" in modes,
+        "min_kelvin": a.get("min_color_temp_kelvin"),
+        "max_kelvin": a.get("max_color_temp_kelvin"),
+        "kelvin": a.get("color_temp_kelvin") if on and a.get("color_mode") == "color_temp" else None,
+        "hue": round(hs[0]) if on and isinstance(hs, (list, tuple)) and hs and isinstance(hs[0], (int, float)) else None,
         "area": areas.get(s["entity_id"], ""),
         "group": bool(a.get("is_hue_group")) or isinstance(a.get("entity_id"), list),
     }
@@ -132,8 +140,11 @@ async def list_entities(ds: dict) -> list[dict]:
     return items
 
 
-async def act(ds: dict, entity_ids: list[str], action: str, brightness: int | None = None) -> None:
-    """Call light/switch turn_on, turn_off or toggle for these entities."""
+async def act(ds: dict, entity_ids: list[str], action: str, brightness: int | None = None,
+              rgb: list[int] | None = None, kelvin: int | None = None) -> None:
+    """Call light/switch turn_on, turn_off or toggle for these entities. With
+    turn_on, lights can also take a brightness (%), an RGB colour or a white
+    colour temperature in kelvin (one of the two)."""
     if action not in ("turn_on", "turn_off", "toggle"):
         raise ValueError("unsupported action")
     by_domain: dict[str, list[str]] = {}
@@ -144,7 +155,12 @@ async def act(ds: dict, entity_ids: list[str], action: str, brightness: int | No
     async with _client(ds) as c:
         for domain, ids in by_domain.items():
             body: dict = {"entity_id": ids}
-            if domain == "light" and action == "turn_on" and brightness is not None:
-                body["brightness_pct"] = max(1, min(100, int(brightness)))
+            if domain == "light" and action == "turn_on":
+                if brightness is not None:
+                    body["brightness_pct"] = max(1, min(100, int(brightness)))
+                if rgb is not None:
+                    body["rgb_color"] = [max(0, min(255, int(c))) for c in rgb]
+                elif kelvin is not None:
+                    body["color_temp_kelvin"] = int(kelvin)
             r = await c.post(f"/api/services/{domain}/{action}", json=body)
             _check(r)
