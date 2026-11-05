@@ -355,9 +355,14 @@
         label: b.label || 'person', zones: [], stream_url: '' }, true);
       return K.json({ ok: true });
     }));
-    api.get('/api/datasources/:id/ha-entities', auth(function () {
-      return K.json({ ok: true, entities: g.TouchBoardDemoData.lightList() });
+    api.get('/api/datasources/:id/ha-entities', auth(function (ctx) {
+      return K.json({ ok: true, entities: g.TouchBoardDemoData.haEntities(ctx.query.domains || '') });
     }));
+    api.post('/api/widgets/:id/control', async function (ctx) {
+      var w = byId(state.widgets, ctx.params.id); if (!w || (w.type !== 'thermostat' && w.type !== 'tv')) return notFound('widget');
+      g.TouchBoardDemoData.control(w, ctx.body || {});
+      return K.json(await poll(w));
+    });
     api.post('/api/rest/preview', auth(function (ctx) {
       var b = ctx.body || {};
       if (!b.url) return K.json({ ok: false, error: 'Set a full URL (http://…), or pick a REST data source and use a relative path.' });

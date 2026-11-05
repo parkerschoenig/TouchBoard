@@ -390,8 +390,50 @@
     });
   }
 
+  // Home Assistant thermostat and Roku TV, kept in memory
+  var TSTAT = { mode: 'heat', current: 68, target: 70, low: 66, high: 76, fan: 'auto' };
+  function thermostat() {
+    var t = TSTAT, range = t.mode === 'heat_cool';
+    var action = t.mode === 'off' ? 'off' : (t.mode !== 'cool' && t.current < (range ? t.low : t.target)) ? 'heating'
+      : (t.mode !== 'heat' && t.current > (range ? t.high : t.target)) ? 'cooling' : 'idle';
+    return { id: 'climate.thermostat', name: 'Thermostat', mode: t.mode, available: true, action: action, current: t.current, humidity: 41,
+      target: range || t.mode === 'off' ? null : t.target, low: range ? t.low : null, high: range ? t.high : null,
+      modes: ['off', 'heat', 'cool', 'heat_cool'], fan: t.fan, fan_modes: ['auto', 'on', 'circulate'], min: 40, max: 90, step: 1, unit: '°F' };
+  }
+  var TV = { on: true, app: 'Home', muted: false };
+  var TV_SOURCES = ['Home', 'Plex', 'YouTube', 'Netflix', 'Antenna TV', 'HDMI 1', 'HDMI 2'];
+  function tv(w) {
+    var favs = ((w.config || {}).favorites || []).filter(function (f) { return TV_SOURCES.indexOf(f) > -1; });
+    return { id: 'media_player.tcl_roku_tv', name: 'TCL Roku TV', state: TV.on ? 'on' : 'off', on: TV.on, available: true,
+      app: TV.app, favorites: favs.length ? favs : TV_SOURCES.slice(1, 6), muted: TV.muted, has_remote: true };
+  }
+  function control(w, b) {
+    if (w.type === 'thermostat') {
+      if (b.action === 'temperature') TSTAT.target = b.value;
+      if (b.action === 'range') { TSTAT.low = b.low; TSTAT.high = b.high; }
+      if (b.action === 'mode') TSTAT.mode = b.value;
+      if (b.action === 'fan') TSTAT.fan = b.value;
+    } else if (w.type === 'tv') {
+      if (b.action === 'power') TV.on = !TV.on;
+      if (b.action === 'source') { TV.app = b.value; TV.on = true; }
+      if (b.action === 'mute' || b.value === 'volume_mute') TV.muted = !TV.muted;
+      if (b.value === 'home') TV.app = 'Home';
+    }
+  }
+  function haEntities(domains) {
+    var all = LIGHTS.map(lightItem).concat([
+      { id: 'climate.thermostat', name: 'Thermostat', domain: 'climate', source_list: [], hvac_modes: ['off', 'heat', 'cool', 'heat_cool'] },
+      { id: 'media_player.tcl_roku_tv', name: 'TCL Roku TV', domain: 'media_player', source_list: TV_SOURCES, hvac_modes: [] },
+      { id: 'remote.tcl_roku_tv', name: 'TCL Roku TV', domain: 'remote', source_list: [], hvac_modes: [] },
+    ]);
+    var want = domains ? domains.split(',') : ['light', 'switch'];
+    return all.filter(function (e) { return want.indexOf(e.domain) > -1; });
+  }
+
   var REGISTRY = {
     lights: lights,
+    thermostat: thermostat,
+    tv: tv,
     bookmarks: bookmarks, rest: rest, nowplaying: nowplaying, photos: photos, rss: rss,
     notes: function () { return { static: true }; },
     clock: function () { return {}; },
@@ -399,7 +441,7 @@
     proxmox: proxmox, truenas: truenas, netbox: netbox, adguard: adguard, opnsense: opnsense,
     ping: ping, calendar: calendar, weather: weather,
   };
-  var NEEDS_SOURCE = { proxmox: 'Proxmox', truenas: 'TrueNAS', netbox: 'NetBox', adguard: 'AdGuard', opnsense: 'OPNsense', calendar: 'Google Calendar', lights: 'Home Assistant' };
+  var NEEDS_SOURCE = { proxmox: 'Proxmox', truenas: 'TrueNAS', netbox: 'NetBox', adguard: 'AdGuard', opnsense: 'OPNsense', calendar: 'Google Calendar', lights: 'Home Assistant', thermostat: 'Home Assistant', tv: 'Home Assistant' };
 
   async function generate(widget, ctx) {
     var fn = REGISTRY[widget.type];
@@ -410,5 +452,6 @@
     try { return await fn(widget, ctx); } catch (e) { return { error: String(e && e.message || e) }; }
   }
 
-  g.TouchBoardDemoData = { generate: generate, lightsAct: lightsAct, lightList: function () { return LIGHTS.map(lightItem); } };
+  g.TouchBoardDemoData = { generate: generate, lightsAct: lightsAct, control: control, haEntities: haEntities,
+    lightList: function () { return LIGHTS.map(lightItem); } };
 })(window);
