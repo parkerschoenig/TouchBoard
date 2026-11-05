@@ -28,13 +28,13 @@ class WidgetUpdate(BaseModel):
 class StackIn(BaseModel):
     name: str
     widget_ids: list[int] = Field(default_factory=list)
-    cycle_mode: Literal["tap", "auto"] = "tap"
+    cycle_mode: Literal["tap", "auto", "manual"] = "tap"
 
 
 class StackUpdate(BaseModel):
     name: Optional[str] = None
     widget_ids: Optional[list[int]] = None
-    cycle_mode: Optional[Literal["tap", "auto"]] = None
+    cycle_mode: Optional[Literal["tap", "auto", "manual"]] = None
 
 
 class LayoutNode(BaseModel):
