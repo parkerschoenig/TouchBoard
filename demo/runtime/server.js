@@ -346,6 +346,15 @@
       g.TouchBoardDemoData.lightsAct(b.entity_ids || [], b.action, b);
       return K.json(await poll(w));
     });
+    api.get('/api/frigate/:id/cameras', auth(function () {
+      return K.json({ ok: true, cameras: ['driveway', 'front_door'], watching: true, error: null });
+    }));
+    api.post('/api/frigate/test', auth(function (ctx) {
+      var b = ctx.body || {};
+      publish({ type: 'camera_event', test: true, source_id: b.source_id, event_id: 'test', camera: b.camera || 'front_door',
+        label: b.label || 'person', zones: [], stream_url: '' }, true);
+      return K.json({ ok: true });
+    }));
     api.get('/api/datasources/:id/ha-entities', auth(function () {
       return K.json({ ok: true, entities: g.TouchBoardDemoData.lightList() });
     }));
