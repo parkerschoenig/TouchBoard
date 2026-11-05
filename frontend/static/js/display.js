@@ -7,7 +7,11 @@
 //   rotate_sec          rotate pages every N seconds (0 = off); pages with
 //                       rotate:false are skipped
 //   rotate_pause_sec    pause rotation for N seconds after someone touches it
-//   stack_cycle_sec     how often "auto" stacks advance
+//   stack_cycle         cycle every stack of 2+ cards automatically
+//   stack_cycle_sec     how often cycling stacks advance
+//
+// A stack's own cycle_mode: "tap" (the default) follows stack_cycle, "auto"
+// always cycles, "manual" only moves when tapped.
 //   alert_takeover      jump to a card when it turns critical
 //   staleness           dim cards whose data stopped updating
 //   wake_lock           keep the screen awake (where the browser allows it)
@@ -146,6 +150,12 @@ function buildPagePanel(page) {
   panel.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
   panel.style.gridTemplateRows    = `repeat(${rows}, minmax(0, 1fr))`;
 
+  const shownAt = now();
+  layout.forEach((node, i) => {
+    // Each card holds for a full interval after the page appears, and cards
+    // flip a moment apart rather than all at once.
+    if (stackById[node.stack_id]) lastCycleAt[node.stack_id] = shownAt + i * 1500;
+  });
   for (const node of layout) {
     const stack = stackById[node.stack_id];
     if (!stack) continue;
@@ -436,8 +446,10 @@ function ticker() {
   const t = now();
   // auto-cycling stacks
   const cycleMs = Math.max(4, Number(opt("stack_cycle_sec", 12))) * 1000;
+  const cycleAll = !!opt("stack_cycle", false);
   for (const c of Object.values(cellByStack)) {
-    if (c.stack.cycle_mode !== "auto") continue;
+    const mode = c.stack.cycle_mode || "tap";
+    if (!(mode === "auto" || (mode === "tap" && cycleAll))) continue;
     if (t - (touchedAt[c.stack.id] || 0) < 30000) continue;
     if (t - (lastCycleAt[c.stack.id] || 0) >= cycleMs) cycle(c.stack);
   }
