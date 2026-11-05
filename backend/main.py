@@ -11,6 +11,7 @@ from . import db
 from .api.routes import router as api_router
 from .poller import poller
 from .update_check import checker as update_checker
+from .camera_alerts import watcher as camera_watcher
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
 
@@ -20,7 +21,9 @@ async def lifespan(app: FastAPI):
     db.init_db()
     poller.start()
     update_checker.start()
+    camera_watcher.start()
     yield
+    await camera_watcher.stop()
     await update_checker.stop()
     await poller.stop()
 

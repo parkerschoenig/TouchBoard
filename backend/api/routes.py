@@ -7,7 +7,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .. import alerts, db, favicons, secrets, integrations, backup, update_check
-from ..integrations import (bookmarks as bookmarks_int, homeassistant as ha_int, nowplaying as nowplaying_int,
+from ..camera_alerts import watcher as camera_watcher
+from ..integrations import (bookmarks as bookmarks_int, frigate as frigate_int, homeassistant as ha_int, nowplaying as nowplaying_int,
                             photos as photos_int, rest as rest_int)
 from ..auth import generate_token, hash_password, verify_password
 from ..models import (
@@ -335,6 +336,42 @@ async def ha_entities(ds_id: int, user: dict = Depends(current_user)):
         return {"ok": True, "entities": await ha_int.list_entities(ds)}
     except Exception as exc:
         return {"ok": False, "error": str(exc) or type(exc).__name__}
+
+
+# ── Frigate camera pop-ups ────────────────────────────────────────────────────
+
+def _frigate_source(ds_id: int) -> dict:
+    ds = _with_source({"data_source_id": ds_id})
+    if not ds or ds.get("type") != "frigate":
+        raise HTTPException(404, "not a Frigate connection")
+    return ds
+
+
+@router.get("/frigate/{ds_id}/cameras")
+async def frigate_cameras(ds_id: int, user: dict = Depends(current_user)):
+    """Cameras Frigate knows about, for the editor's pop-up settings."""
+    ds = _frigate_source(ds_id)
+    client = frigate_int.FrigateClient(ds)
+    try:
+        return {"ok": True, "cameras": await client.cameras(), **camera_watcher.status(ds_id)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc) or type(exc).__name__}
+    finally:
+        await client.close()
+
+
+class CameraTestIn(BaseModel):
+    source_id: int
+    camera: str
+    label: str = "person"
+
+
+@router.post("/frigate/test")
+def frigate_test(body: CameraTestIn, user: dict = Depends(current_user)):
+    """Pop a camera up on every open display, as if Frigate had seen something."""
+    ds = _frigate_source(body.source_id)
+    poller._publish(frigate_int.event_payload(ds, {"id": "test", "camera": body.camera, "label": body.label}, test=True))
+    return {"ok": True}
 
 
 @router.post("/notify/test")

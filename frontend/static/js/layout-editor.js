@@ -2880,6 +2880,14 @@ const INTEGRATION_GUIDES = {
       `Base URL format: <code>http://&lt;jellyfin-server&gt;:8096</code>`,
     ],
   },
+  frigate: {
+    title: "Connecting Frigate for camera pop-ups",
+    steps: [
+      `Base URL: the Frigate API. The internal port needs no login: <code>http://&lt;frigate&gt;:5000</code>. The secure port <code>https://&lt;frigate&gt;:8971</code> needs a Frigate user below.`,
+      `go2rtc URL: where screens play the camera, usually <code>http://&lt;frigate&gt;:1984</code> (left empty, that's assumed).`,
+      `Then select nothing on the board and turn on <strong>Camera pop-ups</strong> in the inspector for each screen that should show them.`,
+    ],
+  },
   homeassistant: {
     title: "Connecting Home Assistant",
     steps: [
@@ -2960,6 +2968,15 @@ const INTEGRATION_META = {
     label: "Jellyfin", color: "#7b5cff", widgetType: "nowplaying", refresh: 10,
     fields: [{ key: "api_key", label: "API key", type: "password", placeholder: "Dashboard → API Keys" }],
     hint: "",
+  },
+  frigate: {
+    label: "Frigate", color: "#2563eb", optional: true,
+    fields: [
+      { key: "username", label: "Username (secure port only)", placeholder: "" },
+      { key: "password", label: "Password", type: "password", placeholder: "" },
+      { key: "go2rtc_url", label: "go2rtc URL", placeholder: "http://<frigate>:1984" },
+    ],
+    hint: "Used for camera pop-ups. Turn them on per screen in the inspector (select nothing on the board).",
   },
   homeassistant: {
     label: "Home Assistant", color: "#18bcf2", widgetType: "lights", configureAfter: true, refresh: 5,
