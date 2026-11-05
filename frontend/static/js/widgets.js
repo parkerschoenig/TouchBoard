@@ -309,7 +309,6 @@ function renderStub(widget, data) {
 
 // ── Clock ─────────────────────────────────────────────────────────────────────
 
-const _clockTimers = new Map(); // widget.id → intervalId
 
 function _tzNow(tz) {
   try {
@@ -449,8 +448,13 @@ function renderClock(widget, _data) {
   }
 
   tick();
-  if (_clockTimers.has(widget.id)) clearInterval(_clockTimers.get(widget.id));
-  _clockTimers.set(widget.id, setInterval(tick, 1000));
+  // One timer per rendered clock, stopped once it has left the page. (Keying by
+  // widget id let a second copy, e.g. a Designer thumbnail, stop the first.)
+  let seen = false, misses = 0;
+  const timer = setInterval(() => {
+    if (wrap.isConnected) { seen = true; tick(); }
+    else if (seen || ++misses > 5) clearInterval(timer);
+  }, 1000);
 
   return wrap;
 }
@@ -1071,26 +1075,38 @@ function _loadHlsJs() {
   return _hlsPromise;
 }
 
-function renderStream(widget, data) {
-  const wrap = el("div", "w-stream");
-  const url = data?.url || widget.config?.stream_url || "";
-  if (!url) { wrap.appendChild(el("div", "w-empty", "No stream URL configured")); return wrap; }
+// Every live player holds a connection to the camera (go2rtc and similar start
+// a session per viewer) and a video decoder until it's destroyed. Cards are
+// re-rendered often (page changes, undo, Designer thumbnails), so players
+// whose video has left the page are torn down by a sweep.
+const _players = new Set();
+let _sweepTimer = null;
 
-  const video = document.createElement("video");
-  video.autoplay = true;
-  video.muted = true;
-  video.setAttribute("playsinline", "");
+function _destroyPlayer(p) {
+  _players.delete(p);
+  p.dead = true;
+  try { p.hls?.destroy(); } catch { /* already gone */ }
+  try { p.video.pause(); p.video.removeAttribute("src"); p.video.load(); } catch { /* ignore */ }
+}
 
-  const isHls = url.includes(".m3u8");
+function _sweepPlayers() {
+  for (const p of _players) if (!p.video.isConnected) _destroyPlayer(p);
+  if (!_players.size) { clearInterval(_sweepTimer); _sweepTimer = null; }
+}
 
-  if (isHls) {
+function _startPlayer(video, url) {
+  const p = { video, hls: null, dead: false };
+  _players.add(p);
+  if (!_sweepTimer) _sweepTimer = setInterval(_sweepPlayers, 2000);
+  if (url.includes(".m3u8")) {
     // Always use HLS.js for m3u8 — it handles live streams reliably across browsers
     _loadHlsJs().then(Hls => {
+      if (p.dead || !video.isConnected) { _destroyPlayer(p); return; }
       if (Hls && Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        p.hls = new Hls();
+        p.hls.loadSource(url);
+        p.hls.attachMedia(video);
+        p.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         // Safari native HLS fallback
         video.src = url;
@@ -1102,8 +1118,33 @@ function renderStream(widget, data) {
     video.loop = true;
     video.play().catch(() => {});
   }
+}
 
+function renderStream(widget, data, _envelope, opts = {}) {
+  const wrap = el("div", "w-stream");
+  const url = data?.url || widget.config?.stream_url || "";
+  if (!url) { wrap.appendChild(el("div", "w-empty", "No stream URL configured")); return wrap; }
+  if (opts.still) {
+    // previews (Designer thumbnails) never open the stream
+    wrap.classList.add("w-stream-still");
+    wrap.appendChild(el("div", "w-empty", "● Live stream"));
+    return wrap;
+  }
+
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.muted = true;
+  video.setAttribute("playsinline", "");
   wrap.appendChild(video);
+
+  // Only connect once the card is actually on the page; a render that is
+  // thrown away straight after never opens the stream.
+  let tries = 0;
+  const begin = () => {
+    if (video.isConnected) _startPlayer(video, url);
+    else if (++tries < 20) setTimeout(begin, 250);
+  };
+  requestAnimationFrame(begin);
   return wrap;
 }
 
@@ -1306,7 +1347,7 @@ export function renderWidget(widget, envelope, opts = {}) {
   if (data?.error) {
     body.appendChild(el("div", "w-error", "Error: " + data.error));
   } else {
-    body.appendChild((RENDERERS[widget.type] || renderStub)(widget, data, envelope));
+    body.appendChild((RENDERERS[widget.type] || renderStub)(widget, data, envelope, opts));
   }
   card.dataset.type = widget.type;
 
