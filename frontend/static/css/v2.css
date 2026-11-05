@@ -22,7 +22,10 @@
 .tb-spark-area { fill: currentColor; opacity: .14; stroke: none; }
 .tb-spark-dot { fill: currentColor; }
 .w-spark { display: inline-block; flex: 0 0 auto; }
-.ping-spark { width: clamp(36px, 18cqw, 90px); height: 1em; margin-left: auto; opacity: .85; }
+.ping-spark { width: clamp(36px, 18cqw, 90px); height: 1em; margin-left: auto; opacity: .85; flex: 0 1 auto; min-width: 0; }
+/* the host name wins: it keeps its space, and graphs only show on wide cards */
+.ping-row .ping-label { flex: 0 1 auto; min-width: 4ch; }
+@container (max-width: 300px) { .ping-spark { display: none; } .ping-spark + .ping-meta { margin-left: auto; } }
 .ping-spark + .ping-meta { margin-left: 8px; min-width: 4.2em; text-align: right; }
 .px-head-left { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
 .px-sparks { display: flex; flex-direction: column; gap: 3px; max-width: 220px; }

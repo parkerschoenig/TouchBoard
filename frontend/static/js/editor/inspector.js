@@ -6,6 +6,7 @@
 // and the screen's display behavior (rotation, night mode, alerts, …).
 
 const SPARK_TYPES = new Set(["ping", "proxmox", "opnsense", "truenas", "rest"]);
+const SPARK_OPT_IN = new Set(["ping"]); // graphs off unless switched on
 const ALERT_TYPES = new Set(["ping", "proxmox", "truenas", "opnsense", "adguard", "weather", "rest", "bookmarks", "nowplaying", "rss"]);
 
 function h(tag, attrs = {}, ...children) {
@@ -109,7 +110,7 @@ export function createInspector(root, ctx) {
         row("Size", h("div", { class: "insp-inline" }, scale, scaleVal)),
         toggle("Show title", !cfg.hide_title, (v) => ctx.updateWidgetConfig(widget, { hide_title: !v })),
         toggle("Light text", cfg.widget_theme === "light", (v) => ctx.updateWidgetConfig(widget, { widget_theme: v ? "light" : "dark" })),
-        SPARK_TYPES.has(widget.type) ? toggle("Sparklines", cfg.sparklines !== false, (v) => ctx.updateWidgetConfig(widget, { sparklines: v })) : null,
+        SPARK_TYPES.has(widget.type) ? toggle("Sparklines", SPARK_OPT_IN.has(widget.type) ? cfg.sparklines === true : cfg.sparklines !== false, (v) => ctx.updateWidgetConfig(widget, { sparklines: v })) : null,
         widget.type !== "clock" && widget.type !== "notes" ? row("Refresh every", h("div", { class: "insp-inline" },
           num(widget.refresh_interval_sec, { min: 2, onChange: (v) => v && ctx.updateWidget(widget, { refresh_interval_sec: Math.max(2, v) }) }), h("span", { text: "s" }))) : null));
 

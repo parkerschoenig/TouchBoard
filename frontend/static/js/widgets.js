@@ -270,7 +270,8 @@ function renderPingRow(t, envelope, showSpark) {
 
 function renderPing(widget, data, envelope) {
   const wrap = el("div", "w-ping");
-  const showSpark = widget.config?.sparklines !== false;
+  // Off unless switched on: on a small card the graph crowds out the host name.
+  const showSpark = widget.config?.sparklines === true;
   const targets = (data && data.targets) || [];
   if (!targets.length) {
     wrap.appendChild(el("div", "w-empty", "No targets configured"));
