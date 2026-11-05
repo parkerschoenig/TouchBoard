@@ -1263,7 +1263,7 @@ async function openWidgetModal(w = null, opts = {}) {
           if (!r.ok) { msg.textContent = `Couldn't load: ${r.error}`; return; }
           entities = r.entities;
           fill(entSel, entities, cfg.entity || (entities.length === 1 ? entities[0].id : ""), entities.length ? "— pick a thermostat —" : "— no thermostats in Home Assistant —");
-          msg.textContent = entities.length ? "" : "Add your thermostat's integration in Home Assistant first (Honeywell Total Connect Comfort for a TH8732WFH).";
+          msg.textContent = entities.length ? "" : "Add your thermostat to Home Assistant first. HomeKit thermostats (like the Honeywell Lyric Round) pair locally with the HomeKit Device integration.";
         };
         cfgWrap.addEventListener("change", (e) => { if (e.target.matches?.("[data-ds-select]")) load(); });
         setTimeout(load, 0);

@@ -515,8 +515,8 @@ function _flash(b, ok = true) {
   setTimeout(() => b.classList.remove("is-pressed"), 180);
 }
 
-// Setpoint taps wait 1.5 s for more taps, then go out as one change (Honeywell's
-// cloud rate-limits). The card keeps showing the new value until Home Assistant
+// Setpoint taps wait 1.5 s for more taps, then go out as one change (cloud
+// thermostats rate-limit, and it saves a burst of HomeKit writes). The card keeps showing the new value until Home Assistant
 // reports it back, so a refresh in between doesn't snap it back.
 const _tstat = new Map();   // widget id → { target|low|high, until, timer, error }
 const MODE_LABEL = { off: "Off", heat: "Heat", cool: "Cool", heat_cool: "Auto", auto: "Auto", fan_only: "Fan", dry: "Dry" };
