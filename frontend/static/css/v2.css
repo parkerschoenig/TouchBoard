@@ -266,7 +266,8 @@
 @keyframes tb-wiggle { from { rotate: -.6deg; } to { rotate: .6deg; } }
 @media (prefers-reduced-motion: reduce) { .de-cell { animation: none; outline: 2px dashed rgba(255,255,255,.4); } }
 .de-minus {
-  position: absolute; top: -8px; left: -8px; z-index: 6; width: 30px; height: 30px; padding: 0; border-radius: 50%;
+  /* inside the corner: cards clip their overflow, and edge cards sit at the screen edge */
+  position: absolute; top: 6px; left: 6px; z-index: 6; width: 30px; height: 30px; padding: 0; border-radius: 50%;
   background: #ef4444; color: #fff; border: 2px solid #fff; font-size: 20px; font-weight: 700; line-height: 1;
   display: grid; place-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.4);
 }
