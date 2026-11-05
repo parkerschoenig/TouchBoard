@@ -14,6 +14,7 @@ widget does, so no video passes through TouchBoard.
 """
 from __future__ import annotations
 
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -30,6 +31,7 @@ class FrigateClient:
         self.password = creds.get("password") or ""
         self.client = httpx.AsyncClient(base_url=ds["base_url"].rstrip("/"), timeout=_TIMEOUT, verify=False)
         self.logged_in = False
+        self.server_time: float | None = None   # Frigate's clock, from its last response
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -52,6 +54,10 @@ class FrigateClient:
             raise PermissionError("Frigate needs a login: add a Frigate username and password, or use the internal port 5000.")
         if r.status_code >= 400:
             raise RuntimeError(f"Frigate API error {r.status_code}")
+        try:
+            self.server_time = parsedate_to_datetime(r.headers["date"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            self.server_time = None
         return r.json()
 
     async def cameras(self) -> list[str]:

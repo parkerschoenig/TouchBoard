@@ -19,7 +19,7 @@ const pretty = (s) => String(s || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c
 const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
 
 export function createCameraPopups(getOptions) {
-  let cur = null;                    // { camera, back, until, tick, labelEl }
+  let cur = null;                    // { camera, back, until, tick, labelEl, test }
   const quietUntil = {};             // camera → time it may pop up again
 
   const cfg = () => {
@@ -37,7 +37,8 @@ export function createCameraPopups(getOptions) {
     if (!cur) return;
     clearInterval(cur.tick);
     cur.back.remove();
-    quietUntil[cur.camera] = Date.now() + cfg().cooldown * 1000;
+    // only real detections start the quiet time; a test mustn't silence the camera
+    if (!cur.test) quietUntil[cur.camera] = Date.now() + cfg().cooldown * 1000;
     cur = null;
   }
 
@@ -62,7 +63,8 @@ export function createCameraPopups(getOptions) {
       </div>`;
     const labelEl = back.querySelector(".cam-pop-label");
     labelEl.textContent = describe(ev);
-    back.querySelector(".cam-pop-cam").textContent = pretty(ev.camera) + (ev.test ? " · test" : "");
+    back.querySelector(".cam-pop-cam").textContent = pretty(ev.camera)
+      + (ev.test ? (cfg().enabled ? " · test" : " · test (pop-ups are off on this screen)") : "");
     back.setAttribute("aria-label", `${labelEl.textContent} at ${pretty(ev.camera)}`);
     back.querySelector(".cam-pop-video").appendChild(
       renderWidget({ id: -9000, type: "stream", title: "", config: { stream_url: ev.stream_url } }, { data: { url: ev.stream_url } }, { hideTitle: true }));
@@ -71,7 +73,7 @@ export function createCameraPopups(getOptions) {
 
     const bar = back.querySelector(".cam-pop-bar i");
     const total = seconds * 1000;
-    cur = { camera: ev.camera, back, labelEl, until: Date.now() + total, total };
+    cur = { camera: ev.camera, back, labelEl, until: Date.now() + total, total, test: !!ev.test };
     cur.tick = setInterval(() => {
       const left = cur.until - Date.now();
       bar.style.width = `${Math.max(0, Math.min(100, (left / cur.total) * 100))}%`;
@@ -90,6 +92,7 @@ export function createCameraPopups(getOptions) {
       cur.until = Date.now() + c.seconds * 1000;
       cur.total = c.seconds * 1000;
       cur.labelEl.textContent = describe(ev);
+      if (cur.test && !ev.test) { cur.test = false; cur.back.querySelector(".cam-pop-cam").textContent = pretty(ev.camera); }
       return;
     }
     if (!ev.test && (quietUntil[ev.camera] || 0) > Date.now()) return;
