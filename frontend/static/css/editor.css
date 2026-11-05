@@ -469,3 +469,11 @@ html[data-app-theme] body.login-page .login-btn { background: var(--ui-accent); 
 .layout-editor-page .layout-stack-card:not(.is-multi) .layout-drag-handle { display: none; }
 .layout-editor-page .layout-stack-card.is-multi .layout-drag-handle { left: auto; right: 8px; }
 /* Cockpit: a centered sheet above the dock, and a plain "Search" button */
+
+/* Lights widget settings: light picker */
+.lt-pick { display: grid; gap: 2px; max-height: min(320px, 40vh); overflow-y: auto; padding: 6px; border: 1px solid var(--ui-border, rgba(255,255,255,.1)); border-radius: 8px; }
+.lt-pick-msg { color: var(--ui-muted, #8b96a5); font-size: 13px; padding: 6px; }
+.lt-pick-area { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ui-muted, #8b96a5); padding: 8px 4px 2px; }
+.lt-pick-row { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; padding: 4px; border-radius: 6px; cursor: pointer; }
+.lt-pick-row:hover { background: rgba(255,255,255,.04); }
+.lt-pick-row small { grid-column: 2; color: var(--ui-muted, #8b96a5); font-size: 11px; }

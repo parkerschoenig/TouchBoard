@@ -73,7 +73,7 @@ const MULTIPAGE_TYPES = new Set(["proxmox", "truenas", "netbox", "weather"]);
 const DEFAULT_SIZE = {
   clock: [6, 4], weather: [6, 6], ping: [6, 6], stream: [8, 6], netbox: [6, 12], truenas: [6, 6],
   proxmox: [10, 10], adguard: [6, 6], opnsense: [8, 6], calendar: [8, 8], bookmarks: [6, 6],
-  rest: [6, 4], nowplaying: [8, 6], notes: [6, 6], photos: [8, 8], rss: [6, 8],
+  rest: [6, 4], nowplaying: [8, 6], notes: [6, 6], photos: [8, 8], rss: [6, 8], lights: [8, 6],
 };
 function defaultSize(type) {
   const [w, h] = DEFAULT_SIZE[type] || [DEF_W, DEF_H];
@@ -239,13 +239,14 @@ const WIDGET_TYPES = [
   { type: "adguard",    label: "AdGuard",         icon: "🛡️" },
   { type: "opnsense",   label: "OPNsense",        icon: "🔥" },
   { type: "calendar",   label: "Calendar",        icon: "📅" },
+  { type: "lights",     label: "Lights",          icon: "💡" },
 ];
 
 const WIDGET_CATEGORIES = [
   { label: "Utilities",    types: ["clock", "weather", "notes", "bookmarks", "rest"],                   color: "#f59e0b" },
   { label: "Media",        types: ["photos", "rss", "stream", "nowplaying"],                            color: "#f472b6" },
   { label: "Ping",         types: ["ping"],                                                             color: "#a78bfa" },
-  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense", "calendar"], color: "#34d399" },
+  { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense", "calendar", "lights"], color: "#34d399" },
 ];
 
 function typeColor(type) {
@@ -1235,10 +1236,53 @@ async function openWidgetModal(w = null, opts = {}) {
       getConfig = () => ({ feeds: feedsTa.value.split("\n").map((s) => s.trim()).filter(Boolean), layout: layoutSel.value,
         max_items: Math.max(1, Number(maxInp.value) || 20), rotate_sec: Math.max(5, Number(rotInp.value) || 12),
         show_source: srcChk.checked, show_images: imgChk.checked, open: openSel.value });
+
+    } else if (t === "lights") {
+      const chk = (on) => Object.assign(document.createElement("input"), { type: "checkbox", checked: on });
+      const picked = new Set(cfg.entities || []);
+      let order = [];
+      const listEl = Object.assign(document.createElement("div"), { className: "lt-pick" });
+      const groupChk = chk(cfg.group_by_area !== false);
+      const swChk = chk(!!cfg.include_switches);
+      const loginChk = chk(!!cfg.require_login);
+      const say = (text) => { listEl.innerHTML = ""; listEl.appendChild(Object.assign(document.createElement("div"), { className: "lt-pick-msg", textContent: text })); };
+      const load = async () => {
+        const dsId = Number(cfgWrap.querySelector("[data-ds-select]")?.value);
+        if (!dsId) { say("Pick a Home Assistant connection below, then choose lights here."); return; }
+        say("Loading lights from Home Assistant…");
+        let r;
+        try { r = await (await fetch(`/api/datasources/${dsId}/ha-entities`)).json(); } catch (e) { r = { ok: false, error: e.message }; }
+        if (!r.ok) { say(`Couldn't load lights: ${r.error || "unknown error"}`); return; }
+        listEl.innerHTML = "";
+        order = r.entities.map((x) => x.id);
+        if (!r.entities.length) { say("Home Assistant has no lights or switches yet."); return; }
+        let area = null;
+        for (const it of r.entities) {
+          const a = it.area || (it.domain === "switch" ? "Switches" : "No area");
+          if (a !== area) { area = a; listEl.appendChild(Object.assign(document.createElement("div"), { className: "lt-pick-area", textContent: a })); }
+          const row = document.createElement("label");
+          row.className = "lt-pick-row";
+          const box = chk(picked.has(it.id));
+          box.addEventListener("change", () => { box.checked ? picked.add(it.id) : picked.delete(it.id); });
+          const name = Object.assign(document.createElement("span"), { textContent: it.name + (it.group ? "  (room / group)" : "") });
+          const meta = Object.assign(document.createElement("small"), { textContent: `${it.id}${it.available ? "" : " · unavailable"}` });
+          row.append(box, name, meta);
+          listEl.appendChild(row);
+        }
+      };
+      cfgWrap.addEventListener("change", (e) => { if (e.target.matches?.("[data-ds-select]")) load(); });
+      setTimeout(load, 0);
+      const hint = Object.assign(document.createElement("div"), { className: "settings-ds-hint",
+        textContent: "Tick the lights for this card. With none ticked, it shows every light (Hue rooms left out)." });
+      cfgWrap.append(makeSbRow("Lights", listEl), hint, makeSbRow("Group by area", groupChk),
+        makeSbRow("With none ticked, include switches", swChk), makeSbRow("Only signed-in users can switch them", loginChk));
+      getConfig = () => ({ ...cfg,
+        entities: [...order.filter((id) => picked.has(id)), ...[...picked].filter((id) => !order.includes(id))],
+        group_by_area: groupChk.checked, include_switches: swChk.checked, require_login: loginChk.checked });
     }
 
     // Integration picker for types that need (or can use) a data source
-    const intTypes = { netbox: ["netbox"], truenas: ["truenas"], proxmox: ["proxmox"], adguard: ["adguard"], opnsense: ["opnsense"], calendar: ["google_calendar"], nowplaying: ["plex", "jellyfin"], rest: ["rest"] };
+    const intTypes = { netbox: ["netbox"], truenas: ["truenas"], proxmox: ["proxmox"], adguard: ["adguard"], opnsense: ["opnsense"], calendar: ["google_calendar"], nowplaying: ["plex", "jellyfin"], rest: ["rest"], lights: ["homeassistant"] };
     if (intTypes[t]) {
       const intHead = Object.assign(document.createElement("div"), {
         className: "sb-form-label", textContent: "Integration",
@@ -2836,6 +2880,15 @@ const INTEGRATION_GUIDES = {
       `Base URL format: <code>http://&lt;jellyfin-server&gt;:8096</code>`,
     ],
   },
+  homeassistant: {
+    title: "Connecting Home Assistant",
+    steps: [
+      `In Home Assistant, click your name (bottom left) → <strong>Security</strong> → <strong>Long-lived access tokens</strong> → <strong>Create token</strong>. Name it <code>TouchBoard</code>.`,
+      `Copy the token into the field above. It's shown only once.`,
+      `Base URL format: <code>http://&lt;home-assistant&gt;:8123</code> or your HTTPS proxy address.`,
+      `The token stays encrypted on the TouchBoard server; the display only ever asks TouchBoard to switch the lights on that card.`,
+    ],
+  },
   rest: {
     title: "Using a REST connection",
     steps: [
@@ -2907,6 +2960,11 @@ const INTEGRATION_META = {
     label: "Jellyfin", color: "#7b5cff", widgetType: "nowplaying", refresh: 10,
     fields: [{ key: "api_key", label: "API key", type: "password", placeholder: "Dashboard → API Keys" }],
     hint: "",
+  },
+  homeassistant: {
+    label: "Home Assistant", color: "#18bcf2", widgetType: "lights", configureAfter: true, refresh: 5,
+    fields: [{ key: "token", label: "Long-lived access token", type: "password", placeholder: "Profile → Security → Long-lived access tokens" }],
+    hint: "The token is encrypted on the server and never sent to the display.",
   },
   rest: {
     label: "REST API", color: "#64748b", widgetType: "rest", optional: true, configureAfter: true, refresh: 30,
