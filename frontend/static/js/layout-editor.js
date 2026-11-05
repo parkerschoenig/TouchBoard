@@ -1,12 +1,18 @@
 import { api } from "./api.js";
 import { renderWidget, openWidgetAppearancePopover } from "./widgets.js";
-import { STYLES, FONTS, THEME_PRESETS, applyTheme, applyCardStyle, hexToRgba } from "./theme.js";
-import { initThemeSwitcher } from "./theme-switcher.js";
-
-initThemeSwitcher();
+import { STYLES, FONTS, THEME_PRESETS, DISPLAY_THEMES, applyTheme, applyCardStyle, hexToRgba } from "./theme.js";
+import { getPrefs, setPref, APP_THEMES } from "./editor/app-theme.js";
+import * as G from "./editor/geometry.js";
+import { createHistory } from "./editor/history.js";
+import { openPalette, isPaletteOpen } from "./editor/palette.js";
+import { TEMPLATES, applyTemplate, miniMap } from "./editor/templates.js";
+import { exportPage, importPage } from "./editor/page-io.js";
+import { createInspector } from "./editor/inspector.js";
+import { createTiledOverlay } from "./editor/tiled.js";
 
 let currentTheme = { style: "classic", font: "inter" };
 let currentCardSettings = {};
+let prefs = getPrefs();
 
 const byId = (id) => document.getElementById(id);
 
@@ -52,29 +58,48 @@ function _makeDraggable(element, handleEl) {
   document.head.appendChild(style);
 })(48);
 
-// Fixed freeform grid — 24 columns × 16 rows, items snap to these cells
-const COLS    = 24;
-const ROWS    = 16;
+// Grid size comes from the board (columns × rows), 24 × 16 unless changed in
+// the inspector. Cards are positioned in these cells on the editor and display.
+let COLS = 24;
+let ROWS = 16;
 const MIN_W   = 2;   // minimum card width in grid units
 const MIN_H   = 2;   // minimum card height in grid units
 const DEF_W   = 6;   // default drop width
 const DEF_H   = 4;   // default drop height
+const CARD_INSET = 5; // px on the real screen; the display uses a 10px gap and 5px padding
 // Multi-page widgets cycle through several screens, so they can't be stacked.
-// Single-page widgets (calendar, clock, ping, adguard, opnsense) are stackable.
 const MULTIPAGE_TYPES = new Set(["proxmox", "truenas", "netbox", "weather"]);
+// Default card size per widget type, in 24 × 16 cells (scaled to the board).
+const DEFAULT_SIZE = {
+  clock: [6, 4], weather: [6, 6], ping: [6, 6], stream: [8, 6], netbox: [6, 12], truenas: [6, 6],
+  proxmox: [10, 10], adguard: [6, 6], opnsense: [8, 6], calendar: [8, 8], bookmarks: [6, 6],
+  rest: [6, 4], nowplaying: [8, 6], notes: [6, 6], photos: [8, 8], rss: [6, 8],
+};
+function defaultSize(type) {
+  const [w, h] = DEFAULT_SIZE[type] || [DEF_W, DEF_H];
+  return [Math.max(MIN_W, Math.round(w * COLS / 24)), Math.max(MIN_H, Math.round(h * ROWS / 16))];
+}
 
-let board          = { columns: COLS, pages: [{ id: 1, name: "Page 1", layout: [] }] };
+let board          = { columns: COLS, rows: ROWS, pages: [{ id: 1, name: "Page 1", layout: [] }], options: {} };
 let currentPageIdx = 0;
 let stacks  = [];
 let widgets = [];
 let widgetsById = {};
 let pingTargets = [];  // global ping target library
 let pingPickerEl = null; // reference to current picker in widget modal
+let dataSources = [];
 let grid;
 let saveTimer = null;
 let dispW = 1920;
 let dispH = 720;
+let stageScale = 1;
 let editingProfileId = null; // which profile the editor is currently working on
+let editingProfileName = "";
+let selectedStackId = null;
+let history = null;
+let inspector = null;
+let tiled = null;
+const cardWidgetIdx = {};   // stack id → index of the widget shown on its card
 
 function currentPage() {
   return board.pages[currentPageIdx] ?? board.pages[0];
@@ -90,26 +115,42 @@ function reindex() {
 }
 
 // ── preview scaling ───────────────────────────────────────────────────────────
+// The board is laid out at the screen's real resolution on a stage, and the
+// stage is scaled down to fit. Cards, gaps and text match the display exactly.
 
 function calcPreview() {
-  const sidebarW   = document.querySelector(".stack-palette")?.offsetWidth || 360;
-  const topbarH    = document.querySelector(".topbar")?.offsetHeight || 44;
-  const tabsH      = byId("page-tabs-bar")?.offsetHeight || 0;
-  const controlsH  = document.querySelector(".editor-controls-ref")?.offsetHeight || 0;
-  const pad = 32;
-  const gaps = (tabsH ? 8 : 0) + (controlsH ? 18 : 0); // gap(8) above vp + gap(8)+margin(10) below vp
-  const availW = Math.max(300, window.innerWidth  - sidebarW - pad);
-  const availH = Math.max(200, window.innerHeight - topbarH  - tabsH - controlsH - gaps - pad);
-  const scale  = Math.min(availW / dispW, availH / dispH, 1);
-  return { w: Math.round(dispW * scale), h: Math.round(dispH * scale) };
+  const area = byId("canvas-area");
+  const tabsH = byId("page-tabs-bar")?.offsetHeight || 0;
+  const statusH = byId("statusbar")?.offsetHeight || 0;
+  const availW = Math.max(240, (area?.clientWidth || window.innerWidth) - 48);
+  const availH = Math.max(160, (area?.clientHeight || window.innerHeight) - tabsH - statusH - 64);
+  const scale = Math.min(availW / dispW, availH / dispH, 1);
+  return { scale, w: Math.round(dispW * scale), h: Math.round(dispH * scale) };
 }
 
 function updatePreviewSize() {
-  const { w, h } = calcPreview();
+  const { scale, w, h } = calcPreview();
+  stageScale = scale;
   const vp = byId("preview-viewport");
+  const stage = byId("ed-stage");
   vp.style.width  = w + "px";
   vp.style.height = h + "px";
-  if (grid) grid.cellHeight(Math.round(h / ROWS));
+  stage.style.width  = dispW + "px";
+  stage.style.height = dispH + "px";
+  stage.style.transform = `scale(${scale})`;
+  const gs = byId("gs-grid");
+  gs.style.setProperty("--cols", COLS);
+  gs.style.setProperty("--rows", ROWS);
+  if (grid) grid.cellHeight(dispH / ROWS);
+  updateStatus();
+  requestAnimationFrame(() => { updateToolbar(); tiled?.render(); });
+}
+
+// px size of a w×h card on the real screen
+function cellPx(w, h) {
+  if (!w || !h) return "";
+  const pw = Math.round(w * dispW / COLS - CARD_INSET * 2), ph = Math.round(h * dispH / ROWS - CARD_INSET * 2);
+  return `${pw} × ${ph} px`;
 }
 
 // ── layout persistence ────────────────────────────────────────────────────────
@@ -118,16 +159,38 @@ function currentLayout() {
   if (!grid) return [];
   return grid.getGridItems().map((el) => {
     const n = el.gridstackNode;
-    return { stack_id: Number(el.dataset.stackId), x: n.x, y: n.y, w: n.w, h: n.h, item_type: el.dataset.itemType || "stack" };
+    const node = { stack_id: Number(el.dataset.stackId), x: n.x, y: n.y, w: n.w, h: n.h, item_type: el.dataset.itemType || "stack" };
+    if (n.locked || n.noMove) node.locked = true;
+    return node;
   });
 }
 
-function saveLayoutSoon() {
+let _savePromise = Promise.resolve();
+function saveLayoutSoon({ record = true, delay = 300 } = {}) {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
+  saveTimer = setTimeout(() => {
     currentPage().layout = currentLayout();
-    await api.updateBoard({ columns: COLS, pages: board.pages });
-  }, 400);
+    _savePromise = api.updateBoard({ columns: COLS, rows: ROWS, pages: board.pages })
+      .catch(() => toast("Couldn't save the layout. Check the connection."))
+      .then(() => {
+        if (record) history?.record();
+        updateTabMinimaps();
+        inspector?.render();
+      });
+  }, delay);
+}
+async function saveNow({ record = true } = {}) {
+  clearTimeout(saveTimer);
+  currentPage().layout = currentLayout();
+  await api.updateBoard({ columns: COLS, rows: ROWS, pages: board.pages });
+  if (record) history?.record();
+  updateTabMinimaps();
+}
+function saveOptionsSoon() {
+  clearTimeout(saveOptionsSoon._t);
+  saveOptionsSoon._t = setTimeout(() => {
+    api.updateProfileBoard(editingProfileId, { options: board.options || {} }).catch(() => toast("Couldn't save the display settings."));
+  }, 350);
 }
 
 // ── live widget data ──────────────────────────────────────────────────────────
@@ -141,24 +204,47 @@ async function fetchLiveData() {
   );
 }
 
+// ── toast ────────────────────────────────────────────────────────────────────
+
+function toast(msg, { action = null, ms = 4000 } = {}) {
+  document.querySelector(".ed-toast")?.remove();
+  const t = Object.assign(document.createElement("div"), { className: "ed-toast" });
+  t.append(Object.assign(document.createElement("span"), { textContent: msg }));
+  if (action) {
+    const b = Object.assign(document.createElement("button"), { type: "button", textContent: action.label });
+    b.addEventListener("click", () => { t.remove(); action.run(); });
+    t.appendChild(b);
+  }
+  document.body.appendChild(t);
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.remove(), ms);
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const WIDGET_TYPES = [
-  { type: "clock",    label: "Clock",           icon: "🕐" },
-  { type: "weather",  label: "Weather",         icon: "⛅" },
-  { type: "ping",     label: "Ping",            icon: "📡" },
-  { type: "stream",   label: "Camera / Stream", icon: "📹" },
-  { type: "netbox",   label: "NetBox",          icon: "🗄️" },
-  { type: "truenas",  label: "TrueNAS",         icon: "💾" },
-  { type: "proxmox",  label: "Proxmox",         icon: "🖥️" },
-  { type: "adguard",  label: "AdGuard",         icon: "🛡️" },
-  { type: "opnsense", label: "OPNsense",        icon: "🔥" },
-  { type: "calendar", label: "Calendar",        icon: "📅" },
+  { type: "clock",      label: "Clock",           icon: "🕐" },
+  { type: "weather",    label: "Weather",         icon: "⛅" },
+  { type: "notes",      label: "Notes",           icon: "📝" },
+  { type: "bookmarks",  label: "Bookmarks",       icon: "🔖" },
+  { type: "rest",       label: "REST / JSON",     icon: "🧩" },
+  { type: "ping",       label: "Ping",            icon: "📡" },
+  { type: "photos",     label: "Photo frame",     icon: "🖼️" },
+  { type: "rss",        label: "RSS / news",      icon: "📰" },
+  { type: "stream",     label: "Camera / Stream", icon: "📹" },
+  { type: "nowplaying", label: "Now playing",     icon: "🎬" },
+  { type: "netbox",     label: "NetBox",          icon: "🗄️" },
+  { type: "truenas",    label: "TrueNAS",         icon: "💾" },
+  { type: "proxmox",    label: "Proxmox",         icon: "🖥️" },
+  { type: "adguard",    label: "AdGuard",         icon: "🛡️" },
+  { type: "opnsense",   label: "OPNsense",        icon: "🔥" },
+  { type: "calendar",   label: "Calendar",        icon: "📅" },
 ];
 
 const WIDGET_CATEGORIES = [
-  { label: "Utilities",    types: ["clock", "weather", "stream"],                       color: "#f59e0b" },
-  { label: "Ping",         types: ["ping"],                                             color: "#a78bfa" },
+  { label: "Utilities",    types: ["clock", "weather", "notes", "bookmarks", "rest"],                   color: "#f59e0b" },
+  { label: "Media",        types: ["photos", "rss", "stream", "nowplaying"],                            color: "#f472b6" },
+  { label: "Ping",         types: ["ping"],                                                             color: "#a78bfa" },
   { label: "Integrations", types: ["netbox", "truenas", "proxmox", "adguard", "opnsense", "calendar"], color: "#34d399" },
 ];
 
@@ -211,19 +297,33 @@ function setupSectionToggles() {
 // ── widget sidebar section ────────────────────────────────────────────────────
 
 const _CAT_EMPTY_HINT = {
-  "Utilities":    "Click + to add a clock or weather widget.",
+  "Utilities":    "Click + to add a clock, weather, notes, bookmarks or a REST widget.",
+  "Media":        "Click + to add a photo frame, news feed, camera or what's playing on Plex / Jellyfin.",
   "Ping":         "Click + to add a ping monitor.",
-  "Integrations": "Click + to connect Proxmox, TrueNAS, NetBox, AdGuard, or OPNsense.",
+  "Integrations": "Click + to connect Proxmox, TrueNAS, NetBox, AdGuard, OPNsense or a calendar.",
 };
+
+function placedWidgetIds() {
+  const ids = new Set();
+  for (const p of board.pages) for (const n of p.layout || []) {
+    const s = stacks.find((x) => x.id === n.stack_id);
+    s?.widget_ids.forEach((id) => ids.add(id));
+  }
+  return ids;
+}
 
 function renderWidgets() {
   const list = byId("widget-list");
   if (!list) return;
   list.innerHTML = "";
   byId("widget-count").textContent = widgets.length;
+  const q = (byId("lib-search")?.value || "").trim().toLowerCase();
+  const onBoard = placedWidgetIds();
 
   for (const cat of WIDGET_CATEGORIES) {
-    const catWidgets = widgets.filter((w) => cat.types.includes(w.type));
+    const catWidgets = widgets.filter((w) => cat.types.includes(w.type) &&
+      (!q || w.title.toLowerCase().includes(q) || w.type.includes(q)));
+    if (q && !catWidgets.length) continue;
 
     const group = document.createElement("div");
     group.className = "sb-cat-group";
@@ -241,7 +341,7 @@ function renderWidgets() {
 
     if (cat.label === "Ping") {
       const targetsBtn = Object.assign(document.createElement("button"), {
-        className: "sb-cat-targets-btn", textContent: "Configure Ping Targets and Groups", title: "Manage ping targets and groups",
+        className: "sb-cat-targets-btn", textContent: "Targets", title: "Manage ping targets and groups",
       });
       targetsBtn.addEventListener("click", (e) => { e.stopPropagation(); openSettingsPanel("Ping Targets"); });
       btnGroup.appendChild(targetsBtn);
@@ -253,8 +353,8 @@ function renderWidgets() {
     addBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (cat.label === "Integrations") openIntegrationWizard();
-      else if (cat.label === "Utilities") openUtilityWizard();
-      else openWidgetModal(null, { typeFilter: cat.types });
+      else if (cat.label === "Ping") openWidgetModal(null, { typeFilter: cat.types });
+      else openCategoryWizard(cat.label);
     });
     btnGroup.appendChild(addBtn);
 
@@ -264,7 +364,7 @@ function renderWidgets() {
     body.className = "sb-cat-body";
 
     if (catWidgets.length) {
-      for (const w of catWidgets) body.appendChild(buildWidgetItem(w));
+      for (const w of catWidgets) body.appendChild(buildWidgetItem(w, onBoard.has(w.id)));
     } else {
       body.appendChild(Object.assign(document.createElement("div"), {
         className: "palette-no-stacks sb-cat-empty",
@@ -281,6 +381,10 @@ function renderWidgets() {
     group.append(header, body);
     list.appendChild(group);
   }
+  if (q && !list.children.length) {
+    list.appendChild(Object.assign(document.createElement("div"), { className: "palette-no-stacks", textContent: `No widgets match "${q}".` }));
+  }
+  setupDragIn();
 }
 
 // Small badge marking whether a widget can be stacked onto another card.
@@ -297,22 +401,14 @@ function _stackBadge(type) {
   return span;
 }
 
-function buildWidgetItem(w) {
+function buildWidgetItem(w, onBoard = false) {
   const item = document.createElement("div");
-  item.className = "sb-widget-item";
+  item.className = "sb-widget-item" + (onBoard ? " on-board" : "");
   item.style.borderLeftColor = typeColor(w.type);
-  item.draggable = true;
   item.dataset.widgetId = w.id;
-  item.addEventListener("dragstart", (e) => {
-    if (e.target.closest("button")) { e.preventDefault(); return; }
-    e.dataTransfer.setData("text/plain", `widget:${w.id}`);
-    if (MULTIPAGE_TYPES.has(w.type)) {
-      e.dataTransfer.setData("application/x-tb-integration", "1");
-    }
-    e.dataTransfer.effectAllowed = "copy";
-    item.classList.add("dragging");
-  });
-  item.addEventListener("dragend", () => item.classList.remove("dragging"));
+  const [dw, dh] = defaultSize(w.type);
+  item.setAttribute("gs-w", dw);
+  item.setAttribute("gs-h", dh);
 
   const head = document.createElement("div");
   head.className = "sb-widget-head";
@@ -326,33 +422,43 @@ function buildWidgetItem(w) {
   const name = document.createElement("span");
   name.className = "sb-widget-name";
   name.textContent = w.title;
+  if (onBoard) name.title = "Already on a page";
 
-  const editBtn = document.createElement("button");
-  editBtn.className = "sb-icon-btn";
-  editBtn.title = "Edit widget";
-  editBtn.textContent = "✎";
+  const placeBtn = Object.assign(document.createElement("button"), {
+    className: "sb-icon-btn sb-place-btn", title: "Add to this page in the first free space", textContent: "＋",
+  });
+  const editBtn = Object.assign(document.createElement("button"), { className: "sb-icon-btn", title: "Edit widget", textContent: "✎" });
+  const delBtn = Object.assign(document.createElement("button"), { className: "sb-icon-btn danger", title: "Delete widget", textContent: "✕" });
 
-  const delBtn = document.createElement("button");
-  delBtn.className = "sb-icon-btn danger";
-  delBtn.title = "Delete widget";
-  delBtn.textContent = "✕";
-
-  head.append(_stackBadge(w.type), badge, name, editBtn, delBtn);
+  head.append(_stackBadge(w.type), badge, name, placeBtn, editBtn, delBtn);
   item.appendChild(head);
 
-  editBtn.addEventListener("click", (e) => {
-    e.preventDefault(); e.stopPropagation();
-    openWidgetModal(w);
-  });
-
-  delBtn.addEventListener("click", async () => {
+  for (const b of [placeBtn, editBtn, delBtn]) b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  placeBtn.addEventListener("click", (e) => { e.stopPropagation(); placeWidget(w.id); });
+  editBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openWidgetModal(w); });
+  delBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
     if (!confirm(`Delete widget "${w.title}"?`)) return;
     await deleteWidgetAndScrub(w);
   });
-
+  item.addEventListener("dblclick", () => placeWidget(w.id));
   return item;
 }
 
+// GridStack drag-in: sidebar items become draggable onto the grid, with the
+// live placeholder and touch support that native HTML5 drag lacked.
+function setupDragIn() {
+  if (!window.GridStack) return;
+  GridStack.setupDragIn(".sb-widget-item", {
+    appendTo: "body",
+    helper: (el) => {
+      const ghost = el.cloneNode(true);
+      ghost.classList.add("sb-drag-ghost");
+      ghost.style.width = el.offsetWidth + "px";
+      return ghost;
+    },
+  });
+}
 
 function makeSbRow(labelText, input) {
   const row = document.createElement("div");
@@ -922,10 +1028,217 @@ async function openWidgetModal(w = null, opts = {}) {
       });
       cfgWrap.append(makeSbRow("View", viewSel), makeSbRow("Days ahead", daysInp), makeSbRow("Max events", maxInp));
       getConfig = () => ({ calendar_view: viewSel.value, days_ahead: Number(daysInp.value) || 7, max_events: Number(maxInp.value) || 25 });
+    } else if (t === "notes") {
+      const ta = Object.assign(document.createElement("textarea"), {
+        className: "sb-form-input wm-notes-text", rows: 9, value: cfg.text || "",
+        placeholder: "## Heading\n- list item\n- [ ] to-do\n**bold**, *italic*, `code`, [link](https://…)",
+      });
+      const sizeSel = sel([["0.85", "Small"], ["1", "Medium"], ["1.3", "Large"], ["1.7", "Extra large"]], String(cfg.size || 1));
+      const alignSel = sel([["left", "Left"], ["center", "Center"], ["right", "Right"]], cfg.align || "left");
+      const tintOn = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!cfg.tint });
+      const tint = Object.assign(document.createElement("input"), { type: "color", className: "sb-form-input", value: cfg.tint || "#fbbf24" });
+      tint.style.cssText = "width:44px;height:32px;padding:2px 4px;";
+      const tintRow = document.createElement("div");
+      tintRow.className = "wm-inline";
+      tintRow.append(tintOn, tint);
+      const openSel = sel([["qr", "Show a QR code"], ["new", "New tab"], ["same", "Same tab"]], cfg.open || "qr");
+      const preview = document.createElement("div");
+      preview.className = "wm-live-preview";
+      const draw = () => {
+        preview.innerHTML = "";
+        preview.appendChild(renderWidget({ id: -1, type: "notes", title: "", config: { text: ta.value, size: Number(sizeSel.value), align: alignSel.value, tint: tintOn.checked ? tint.value : "" } }, null, { hideTitle: true }));
+      };
+      [ta, sizeSel, alignSel, tintOn, tint].forEach((x) => x.addEventListener("input", draw));
+      draw();
+      cfgWrap.append(makeSbRow("Note (Markdown)", ta), preview, makeSbRow("Text size", sizeSel), makeSbRow("Align", alignSel),
+        makeSbRow("Tint", tintRow), makeSbRow("Tapping a link on the display", openSel));
+      getConfig = () => ({ text: ta.value, size: Number(sizeSel.value), align: alignSel.value, tint: tintOn.checked ? tint.value : "", open: openSel.value });
+
+    } else if (t === "bookmarks") {
+      const layoutSel = sel([["tiles", "Tiles"], ["list", "List with status"], ["dock", "Dock (one row)"]], cfg.layout || "tiles");
+      const openSel = sel([["new", "New tab"], ["same", "Same tab"], ["qr", "Show a QR code (wall panels)"]], cfg.open || "new");
+      const groups = structuredClone(cfg.groups?.length ? cfg.groups : [{ name: "Apps", items: [] }]);
+      const editor = document.createElement("div");
+      editor.className = "wm-bm-editor";
+      const drawGroups = () => {
+        editor.innerHTML = "";
+        groups.forEach((g, gi) => {
+          const box = document.createElement("div");
+          box.className = "wm-bm-group";
+          const gHead = document.createElement("div");
+          gHead.className = "wm-bm-ghead";
+          const gName = inp("Group name", g.name || "");
+          gName.addEventListener("input", () => { g.name = gName.value; });
+          const gDel = Object.assign(document.createElement("button"), { type: "button", className: "small danger", textContent: "Remove group" });
+          gDel.addEventListener("click", () => { groups.splice(gi, 1); if (!groups.length) groups.push({ name: "Apps", items: [] }); drawGroups(); });
+          gHead.append(gName, gDel);
+          box.appendChild(gHead);
+          (g.items ||= []).forEach((it, ii) => {
+            const row = document.createElement("div");
+            row.className = "wm-bm-row";
+            const label = inp("Label", it.label || "");
+            const url = inp("https://…", it.url || "");
+            const icon = inp("auto", it.icon || "");
+            icon.title = "auto (site icon), letters, di:jellyfin (dashboard-icons), si:plex (simple-icons) or an image URL";
+            const check = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!it.check, title: "Check whether it's up" });
+            const checkLbl = document.createElement("label");
+            checkLbl.className = "wm-bm-check";
+            checkLbl.append(check, " up?");
+            const up = Object.assign(document.createElement("button"), { type: "button", className: "sw-arrow", textContent: "↑", title: "Move up" });
+            const del = Object.assign(document.createElement("button"), { type: "button", className: "sw-remove", textContent: "✕", title: "Remove" });
+            label.addEventListener("input", () => { it.label = label.value; });
+            url.addEventListener("input", () => { it.url = url.value.trim(); });
+            icon.addEventListener("input", () => { it.icon = icon.value.trim(); });
+            check.addEventListener("change", () => { it.check = check.checked; });
+            up.addEventListener("click", () => { if (ii > 0) { [g.items[ii - 1], g.items[ii]] = [g.items[ii], g.items[ii - 1]]; drawGroups(); } });
+            del.addEventListener("click", () => { g.items.splice(ii, 1); drawGroups(); });
+            row.append(label, url, icon, checkLbl, up, del);
+            box.appendChild(row);
+          });
+          const addLink = Object.assign(document.createElement("button"), { type: "button", className: "sb-add-target", textContent: "+ Link" });
+          addLink.addEventListener("click", () => { g.items.push({ label: "", url: "", icon: "auto", check: false }); drawGroups(); box.querySelector(".wm-bm-row:last-of-type input")?.focus(); });
+          box.appendChild(addLink);
+          editor.appendChild(box);
+        });
+        const addGroup = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "+ Group" });
+        addGroup.addEventListener("click", () => { groups.push({ name: `Group ${groups.length + 1}`, items: [] }); drawGroups(); });
+        editor.appendChild(addGroup);
+      };
+      drawGroups();
+
+      // Import: Homepage services.yaml, a browser bookmarks export, or "Label | URL" lines
+      const importBox = Object.assign(document.createElement("textarea"), { className: "sb-form-input", rows: 4,
+        placeholder: "Paste a Homepage services.yaml, a browser bookmarks export (HTML), or lines like  Jellyfin | http://jellyfin.lan:8096" });
+      const importBtn = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "Import links" });
+      importBtn.addEventListener("click", () => {
+        const found = parseBookmarkImport(importBox.value);
+        if (!found.length) { importBtn.textContent = "Nothing found"; setTimeout(() => (importBtn.textContent = "Import links"), 1500); return; }
+        for (const fg of found) {
+          const existing = groups.find((g) => g.name === fg.name);
+          if (existing) existing.items.push(...fg.items); else groups.push(fg);
+        }
+        importBox.value = "";
+        drawGroups();
+      });
+      const importWrap = document.createElement("details");
+      importWrap.className = "wm-details";
+      importWrap.append(Object.assign(document.createElement("summary"), { textContent: "Import links" }), importBox, importBtn);
+      cfgWrap.append(makeSbRow("Layout", layoutSel), makeSbRow("Tapping a link on the display", openSel), editor, importWrap);
+      getConfig = () => ({
+        layout: layoutSel.value, open: openSel.value,
+        groups: groups.map((g) => ({ name: (g.name || "").trim() || "Apps", items: (g.items || []).filter((i) => i.url) })),
+      });
+
+    } else if (t === "rest") {
+      const urlInp = inp("https://api.example.com/v1/status  or  /relative/to/connection", cfg.url || "");
+      const methodSel = sel([["GET", "GET"], ["POST", "POST"]], cfg.method || "GET");
+      const bodyTa = Object.assign(document.createElement("textarea"), { className: "sb-form-input", rows: 3, value: cfg.body || "", placeholder: '{"query": "…"}' });
+      const bodyRow = makeSbRow("Request body", bodyTa);
+      const syncBody = () => { bodyRow.style.display = methodSel.value === "POST" ? "" : "none"; };
+      methodSel.addEventListener("change", syncBody); syncBody();
+      const modeSel = sel([["stats", "Numbers"], ["gauge", "Gauges"], ["list", "List only"]], cfg.display || "stats");
+      const fields = structuredClone(cfg.fields || []);
+      const fieldsEl = document.createElement("div");
+      fieldsEl.className = "wm-rest-fields";
+      const drawFields = () => {
+        fieldsEl.innerHTML = "";
+        fields.forEach((f, i) => {
+          const row = document.createElement("div");
+          row.className = "wm-rest-row";
+          const label = inp("Label", f.label || ""), path = inp("data.value", f.path || "");
+          const fmt = sel([["auto", "Auto"], ["number", "Number"], ["percent", "Percent"], ["bytes", "Bytes"], ["duration", "Duration (s)"], ["bool", "Yes / no"], ["text", "Text"]], f.format || "auto");
+          const unit = inp("unit", f.unit || ""), max = inp("max", f.max ?? "", "number");
+          max.title = "Gauge maximum (default 100)";
+          const del = Object.assign(document.createElement("button"), { type: "button", className: "sw-remove", textContent: "✕" });
+          label.addEventListener("input", () => (f.label = label.value)); path.addEventListener("input", () => (f.path = path.value.trim()));
+          fmt.addEventListener("change", () => (f.format = fmt.value)); unit.addEventListener("input", () => (f.unit = unit.value));
+          max.addEventListener("input", () => (f.max = max.value === "" ? null : Number(max.value)));
+          del.addEventListener("click", () => { fields.splice(i, 1); drawFields(); });
+          row.append(label, path, fmt, unit, max, del);
+          fieldsEl.appendChild(row);
+        });
+        const add = Object.assign(document.createElement("button"), { type: "button", className: "sb-add-target", textContent: "+ Field" });
+        add.addEventListener("click", () => { fields.push({ label: "", path: "", format: "auto" }); drawFields(); });
+        fieldsEl.appendChild(add);
+      };
+      drawFields();
+      const lst = cfg.list || {};
+      const listPath = inp("items[*]", lst.path || ""), listLabel = inp("name", lst.label || ""), listValue = inp("status", lst.value || "");
+      const listLimit = inp("10", lst.limit ?? 10, "number");
+      const listRow = document.createElement("div");
+      listRow.className = "wm-rest-row";
+      listRow.append(listPath, listLabel, listValue, listLimit);
+
+      // Try the request and click values in the response to add them as fields.
+      const testBtn = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "Test request" });
+      const out = document.createElement("div");
+      out.className = "wm-json";
+      testBtn.addEventListener("click", async () => {
+        testBtn.disabled = true; testBtn.textContent = "Requesting…"; out.innerHTML = "";
+        try {
+          const r = await fetch("/api/rest/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: urlInp.value.trim(), method: methodSel.value, body: bodyTa.value, data_source_id: Number(cfgWrap.querySelector("[data-ds-select]")?.value) || null }) });
+          const res = await r.json();
+          if (res.error) out.textContent = res.error;
+          else {
+            out.appendChild(Object.assign(document.createElement("div"), { className: "wm-json-status", textContent: `HTTP ${res.status} · click a value to add it as a field` }));
+            out.appendChild(jsonTree(res.body, "", (path, key) => { fields.push({ label: key, path, format: "auto" }); drawFields(); }));
+          }
+        } catch (e) { out.textContent = "Request failed."; }
+        testBtn.disabled = false; testBtn.textContent = "Test request";
+      });
+      cfgWrap.append(makeSbRow("URL", urlInp), makeSbRow("Method", methodSel), bodyRow, testBtn, out,
+        makeSbRow("Show as", modeSel),
+        Object.assign(document.createElement("div"), { className: "sb-form-label", textContent: "Fields (label, JSON path, format, unit, gauge max)" }), fieldsEl,
+        Object.assign(document.createElement("div"), { className: "sb-form-label", textContent: "List (optional): items path, label path, value path, limit" }), listRow);
+      getConfig = () => ({
+        ...cfg, url: urlInp.value.trim(), method: methodSel.value, body: bodyTa.value, display: modeSel.value,
+        fields: fields.filter((f) => f.path || f.label),
+        list: listPath.value.trim() ? { path: listPath.value.trim(), label: listLabel.value.trim(), value: listValue.value.trim(), limit: Number(listLimit.value) || 10 } : null,
+      });
+
+    } else if (t === "nowplaying") {
+      const userChk = Object.assign(document.createElement("input"), { type: "checkbox", checked: cfg.show_user !== false });
+      const devChk = Object.assign(document.createElement("input"), { type: "checkbox", checked: cfg.show_device !== false });
+      const maxInp = inp("4", cfg.max_sessions ?? 4, "number");
+      cfgWrap.append(makeSbRow("Show who's watching", userChk), makeSbRow("Show the device", devChk), makeSbRow("Most sessions shown", maxInp));
+      getConfig = () => ({ ...cfg, show_user: userChk.checked, show_device: devChk.checked, max_sessions: Math.max(1, Number(maxInp.value) || 4) });
+
+    } else if (t === "photos") {
+      const srcSel = sel([["folder", "A folder on the TouchBoard server"], ["urls", "Image URLs"]], cfg.source || "folder");
+      const folderInp = inp("/srv/photos/frame", cfg.folder || "");
+      const urlsTa = Object.assign(document.createElement("textarea"), { className: "sb-form-input", rows: 4, value: (cfg.urls || []).join("\n"), placeholder: "One image URL per line" });
+      const folderRow = makeSbRow("Folder (read recursively)", folderInp), urlsRow = makeSbRow("Image URLs", urlsTa);
+      const syncSrc = () => { folderRow.style.display = srcSel.value === "folder" ? "" : "none"; urlsRow.style.display = srcSel.value === "urls" ? "" : "none"; };
+      srcSel.addEventListener("change", syncSrc); syncSrc();
+      const intervalInp = inp("20", cfg.interval ?? 20, "number");
+      const fitSel = sel([["cover", "Fill the card (crop)"], ["contain", "Fit inside (no crop)"]], cfg.fit || "cover");
+      const shuffle = Object.assign(document.createElement("input"), { type: "checkbox", checked: cfg.shuffle !== false });
+      const kb = Object.assign(document.createElement("input"), { type: "checkbox", checked: cfg.kenburns !== false });
+      const cap = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!cfg.caption });
+      cfgWrap.append(makeSbRow("Source", srcSel), folderRow, urlsRow, makeSbRow("Seconds per photo", intervalInp), makeSbRow("Fit", fitSel),
+        makeSbRow("Shuffle", shuffle), makeSbRow("Slow zoom (Ken Burns)", kb), makeSbRow("Show file name", cap));
+      getConfig = () => ({ source: srcSel.value, folder: folderInp.value.trim(), urls: urlsTa.value.split("\n").map((s) => s.trim()).filter(Boolean),
+        interval: Math.max(5, Number(intervalInp.value) || 20), fit: fitSel.value, shuffle: shuffle.checked, kenburns: kb.checked, caption: cap.checked });
+
+    } else if (t === "rss") {
+      const feedsTa = Object.assign(document.createElement("textarea"), { className: "sb-form-input", rows: 4, value: (cfg.feeds || []).join("\n"), placeholder: "One feed URL per line (RSS or Atom)" });
+      const layoutSel = sel([["list", "Headline list"], ["spotlight", "One big headline at a time"]], cfg.layout || "list");
+      const maxInp = inp("20", cfg.max_items ?? 20, "number");
+      const rotInp = inp("12", cfg.rotate_sec ?? 12, "number");
+      const srcChk = Object.assign(document.createElement("input"), { type: "checkbox", checked: cfg.show_source !== false });
+      const imgChk = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!cfg.show_images });
+      const openSel = sel([["qr", "Show a QR code"], ["new", "New tab"], ["same", "Same tab"]], cfg.open || "qr");
+      cfgWrap.append(makeSbRow("Feeds", feedsTa), makeSbRow("Layout", layoutSel), makeSbRow("Most headlines", maxInp),
+        makeSbRow("Spotlight: seconds per headline", rotInp), makeSbRow("Show the source", srcChk), makeSbRow("Show images", imgChk),
+        makeSbRow("Tapping a headline on the display", openSel));
+      getConfig = () => ({ feeds: feedsTa.value.split("\n").map((s) => s.trim()).filter(Boolean), layout: layoutSel.value,
+        max_items: Math.max(1, Number(maxInp.value) || 20), rotate_sec: Math.max(5, Number(rotInp.value) || 12),
+        show_source: srcChk.checked, show_images: imgChk.checked, open: openSel.value });
     }
 
-    // Integration picker for types that need a data source
-    const intTypes = { netbox: "netbox", truenas: "truenas", proxmox: "proxmox", adguard: "adguard", opnsense: "opnsense", calendar: "google_calendar" };
+    // Integration picker for types that need (or can use) a data source
+    const intTypes = { netbox: ["netbox"], truenas: ["truenas"], proxmox: ["proxmox"], adguard: ["adguard"], opnsense: ["opnsense"], calendar: ["google_calendar"], nowplaying: ["plex", "jellyfin"], rest: ["rest"] };
     if (intTypes[t]) {
       const intHead = Object.assign(document.createElement("div"), {
         className: "sb-form-label", textContent: "Integration",
@@ -942,7 +1255,7 @@ async function openWidgetModal(w = null, opts = {}) {
         const noneOpt = document.createElement("option");
         noneOpt.value = ""; noneOpt.textContent = "— none —";
         dsSel.appendChild(noneOpt);
-        for (const ds of sources.filter(ds => ds.type === intTypes[t])) {
+        for (const ds of sources.filter(ds => intTypes[t].includes(ds.type))) {
           const o = document.createElement("option");
           o.value = ds.id; o.textContent = ds.name;
           dsSel.appendChild(o);
@@ -950,8 +1263,9 @@ async function openWidgetModal(w = null, opts = {}) {
         dsSel.value = prev || (w?.data_source_id ? String(w.data_source_id) : "");
       }
 
+      dsSel.dataset.dsSelect = "1";
       populateDsSel(allDataSources);
-      cfgWrap.appendChild(makeSbRow("Data source", dsSel));
+      cfgWrap.appendChild(makeSbRow(t === "rest" ? "Connection (optional: base URL + secret headers)" : "Data source", dsSel));
 
       // Inline integration credential editing
       const inlineCredsWrap = document.createElement("div");
@@ -1039,7 +1353,7 @@ async function openWidgetModal(w = null, opts = {}) {
   });
   const refreshRow = makeSbRow("Refresh (sec)", refreshInput);
   body.appendChild(refreshRow);
-  function updateRefreshVisibility() { refreshRow.style.display = type === "clock" ? "none" : ""; }
+  function updateRefreshVisibility() { refreshRow.style.display = type === "clock" || type === "notes" ? "none" : ""; }
   updateRefreshVisibility();
   dlg.appendChild(body);
 
@@ -1067,7 +1381,7 @@ async function openWidgetModal(w = null, opts = {}) {
   saveBtn.addEventListener("click", async () => {
     const finalType  = w ? w.type : type;
     const title      = nameInput.value.trim() || "Untitled";
-    const refresh    = finalType === "clock" ? 0 : Math.max(2, Number(refreshInput.value) || 15);
+    const refresh    = finalType === "clock" ? 0 : finalType === "notes" ? 300 : Math.max(2, Number(refreshInput.value) || 15);
     const configData = getConfig();
     const dsId       = configData._dsId !== undefined ? configData._dsId : (w?.data_source_id ?? null);
     delete configData._dsId;
@@ -1080,6 +1394,7 @@ async function openWidgetModal(w = null, opts = {}) {
         Object.assign(w, updated);
         reindex();
         renderWidgets(); refreshGridCards();
+        inspector?.render(true);
         dlg.close();
       } else {
         const created = await api.createWidget({ type: finalType, title, config: configData, refresh_interval_sec: refresh, data_source_id: dsId });
@@ -1087,6 +1402,8 @@ async function openWidgetModal(w = null, opts = {}) {
         reindex();
         renderWidgets();
         dlg.close();
+        if (opts.onCreated) opts.onCreated(created);
+        else toast(`Created ${created.title}. Drag it onto the board, or tap ＋ on it.`);
       }
     } catch {
       saveBtn.disabled = false; saveBtn.textContent = w ? "Save" : "Create";
@@ -1099,53 +1416,131 @@ async function openWidgetModal(w = null, opts = {}) {
   nameInput.focus();
 }
 
-// ── utility wizard ─────────────────────────────────────────────────────────────
+// ── import helpers for the bookmarks and REST forms ──────────────────────────
 
-// Mirrors the integration wizard: pick a utility tile (icon + label), then
-// configure & create it. Config reuses openWidgetModal with a Back button.
-function openUtilityWizard() {
+// Homepage services.yaml, a Netscape bookmarks HTML export, or "Label | URL" lines.
+function parseBookmarkImport(text) {
+  const src = (text || "").trim();
+  if (!src) return [];
+  // Browser bookmarks export (HTML)
+  if (/<a\s[^>]*href=/i.test(src)) {
+    const doc = new DOMParser().parseFromString(src, "text/html");
+    const items = [...doc.querySelectorAll("a[href]")]
+      .filter((a) => /^https?:/i.test(a.getAttribute("href")))
+      .map((a) => ({ label: a.textContent.trim() || a.href, url: a.getAttribute("href"), icon: "auto", check: false }));
+    return items.length ? [{ name: "Imported", items }] : [];
+  }
+  // Homepage services.yaml
+  if (/^\s*-\s*[^:]+:\s*$/m.test(src) && /href:/i.test(src)) {
+    const groups = [];
+    let group = null, item = null;
+    for (const raw of src.split(/\r?\n/)) {
+      if (!raw.trim() || raw.trim().startsWith("#")) continue;
+      const indent = raw.length - raw.trimStart().length;
+      const m = raw.trim().match(/^-\s*(.+?):\s*$/);
+      if (m && indent === 0) { group = { name: m[1].replace(/^["']|["']$/g, ""), items: [] }; groups.push(group); item = null; continue; }
+      if (m && group) { item = { label: m[1].replace(/^["']|["']$/g, ""), url: "", icon: "auto", check: false }; group.items.push(item); continue; }
+      const kv = raw.trim().match(/^(href|icon):\s*(.+)$/i);
+      if (kv && item) {
+        const v = kv[2].trim().replace(/^["']|["']$/g, "");
+        if (kv[1].toLowerCase() === "href") item.url = v;
+        else item.icon = /^https?:/.test(v) ? v : v.startsWith("si-") ? `si:${v.slice(3)}` : `di:${v.replace(/\.(png|svg|webp)$/i, "")}`;
+      }
+    }
+    return groups.map((g) => ({ ...g, items: g.items.filter((i) => i.url) })).filter((g) => g.items.length);
+  }
+  // Plain lines
+  const items = src.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+    const [a, b] = l.split("|").map((s) => s.trim());
+    const url = b || a;
+    if (!/^https?:\/\//i.test(url)) return null;
+    return { label: b ? a : url.replace(/^https?:\/\//, "").split("/")[0], url, icon: "auto", check: false };
+  }).filter(Boolean);
+  return items.length ? [{ name: "Imported", items }] : [];
+}
+
+// Clickable JSON tree for the REST widget's "Test request".
+function jsonTree(value, path, onPick, depth = 0) {
+  const wrap = document.createElement("div");
+  wrap.className = "wm-json-node";
+  const child = (k, v) => {
+    const p = typeof k === "number" ? `${path}[${k}]` : (/^[A-Za-z_$][\w$]*$/.test(k) ? (path ? `${path}.${k}` : k) : `${path}['${k}']`);
+    const row = document.createElement("div");
+    row.className = "wm-json-row";
+    const keyEl = Object.assign(document.createElement("span"), { className: "wm-json-key", textContent: typeof k === "number" ? `[${k}]` : k });
+    row.appendChild(keyEl);
+    if (v && typeof v === "object") {
+      const det = document.createElement("details");
+      if (depth < 1) det.open = true;
+      const sum = Object.assign(document.createElement("summary"), { textContent: Array.isArray(v) ? `[${v.length}]` : `{${Object.keys(v).length}}` });
+      det.appendChild(sum);
+      det.addEventListener("toggle", () => {
+        if (det.open && det.childElementCount === 1) det.appendChild(jsonTree(v, p, onPick, depth + 1));
+      }, { once: false });
+      if (det.open) det.appendChild(jsonTree(v, p, onPick, depth + 1));
+      row.appendChild(det);
+    } else {
+      const val = Object.assign(document.createElement("button"), { type: "button", className: "wm-json-val", textContent: JSON.stringify(v), title: `Add ${p}` });
+      val.addEventListener("click", () => onPick(p, typeof k === "number" ? `${path.split(".").pop()} ${k}` : k));
+      row.appendChild(val);
+    }
+    wrap.appendChild(row);
+  };
+  if (Array.isArray(value)) value.slice(0, 50).forEach((v, i) => child(i, v));
+  else if (value && typeof value === "object") Object.entries(value).slice(0, 80).forEach(([k, v]) => child(k, v));
+  else {
+    const val = Object.assign(document.createElement("button"), { type: "button", className: "wm-json-val", textContent: JSON.stringify(value) });
+    val.addEventListener("click", () => onPick(path || "$", "value"));
+    wrap.appendChild(val);
+  }
+  return wrap;
+}
+
+// ── category wizard (utilities, media) ──────────────────────────────────────
+
+function openCategoryWizard(label = "Utilities") {
+  const cat = WIDGET_CATEGORIES.find((c) => c.label === label) || WIDGET_CATEGORIES[0];
   const dlg = byId("widget-modal");
   dlg.innerHTML = "";
-
   const head = document.createElement("div");
   head.className = "modal-head";
-  const titleEl = Object.assign(document.createElement("h2"), { textContent: "Add Utility Widget" });
   const closeBtn = Object.assign(document.createElement("button"), { className: "modal-close-btn", textContent: "✕" });
   closeBtn.addEventListener("click", () => dlg.close());
-  head.append(titleEl, closeBtn);
-
+  head.append(Object.assign(document.createElement("h2"), { textContent: `Add ${label === "Media" ? "a media" : "a utility"} widget` }), closeBtn);
   const body = document.createElement("div");
   body.className = "modal-body";
-
-  const hint = Object.assign(document.createElement("p"), {
-    className: "wizard-step-hint",
-    textContent: "Pick the utility you want to add:",
-  });
-  body.appendChild(hint);
-
-  const grid = document.createElement("div");
-  grid.className = "wizard-type-grid";
-  const utilTypes = WIDGET_CATEGORIES.find(c => c.label === "Utilities")?.types || [];
-  for (const t of utilTypes) {
-    const wt = WIDGET_TYPES.find(x => x.type === t);
-    const tile = document.createElement("button");
-    tile.className = "wizard-type-tile";
-    tile.type = "button";
-    tile.style.setProperty("--tile-color", typeColor(t));
-    tile.innerHTML = `<span class="wzt-icon">${wt?.icon || "⚙️"}</span><span class="wzt-label">${wt?.label || t}</span>`;
-    tile.addEventListener("click", () =>
-      openWidgetModal(null, { defaultType: t, typeFilter: [t], backTo: openUtilityWizard }));
-    grid.appendChild(tile);
+  body.appendChild(Object.assign(document.createElement("p"), { className: "wizard-step-hint", textContent: "Pick the widget you want to add:" }));
+  const gridEl = document.createElement("div");
+  gridEl.className = "wizard-type-grid";
+  const tile = (icon, text, color, onClick) => {
+    const b = document.createElement("button");
+    b.className = "wizard-type-tile"; b.type = "button";
+    b.style.setProperty("--tile-color", color);
+    b.innerHTML = `<span class="wzt-icon"></span><span class="wzt-label"></span>`;
+    b.querySelector(".wzt-icon").textContent = icon;
+    b.querySelector(".wzt-label").textContent = text;
+    b.addEventListener("click", onClick);
+    gridEl.appendChild(b);
+  };
+  for (const t of cat.types) {
+    const wt = WIDGET_TYPES.find((x) => x.type === t);
+    if (t === "nowplaying") {
+      tile("🎬", "Plex", INTEGRATION_META.plex.color, () => openIntegrationWizard("plex", { backTo: () => openCategoryWizard(label) }));
+      tile("🎬", "Jellyfin", INTEGRATION_META.jellyfin.color, () => openIntegrationWizard("jellyfin", { backTo: () => openCategoryWizard(label) }));
+      continue;
+    }
+    tile(wt?.icon || "⚙️", wt?.label || t, typeColor(t), () => openWidgetModal(null, { defaultType: t, typeFilter: [t], backTo: () => openCategoryWizard(label) }));
   }
-  body.appendChild(grid);
-
+  body.appendChild(gridEl);
   dlg.append(head, body);
   dlg.showModal();
 }
+const openUtilityWizard = () => openCategoryWizard("Utilities");
+
 
 // ── integration wizard ────────────────────────────────────────────────────────
 
-async function openIntegrationWizard(preType = null) {
+async function openIntegrationWizard(preType = null, wopts = {}) {
   const dlg = byId("widget-modal");
   dlg.innerHTML = "";
 
@@ -1184,6 +1579,8 @@ async function openIntegrationWizard(preType = null) {
     const grid = document.createElement("div");
     grid.className = "wizard-type-grid";
     for (const [key, meta] of Object.entries(INTEGRATION_META)) {
+      if (wopts.only && !wopts.only.includes(key)) continue;
+      if (!wopts.only && meta.optional) continue;
       const wt = WIDGET_TYPES.find(w => w.type === (meta.widgetType || key));
       const tile = document.createElement("button");
       tile.className = "wizard-type-tile";
@@ -1204,11 +1601,11 @@ async function openIntegrationWizard(preType = null) {
     const wt   = WIDGET_TYPES.find(w => w.type === (meta.widgetType || type));
     titleEl.textContent = `${wt?.icon || ""} ${meta.label}`;
 
-    if (!preType) {
+    if (!preType || wopts.backTo) {
       const backBtn = Object.assign(document.createElement("button"), {
         type: "button", className: "small wizard-back-btn", textContent: "← Back",
       });
-      backBtn.addEventListener("click", showStep1);
+      backBtn.addEventListener("click", () => (wopts.backTo ? wopts.backTo() : showStep1()));
       body.appendChild(backBtn);
     }
 
@@ -1342,11 +1739,14 @@ async function openIntegrationWizard(preType = null) {
 
       saveBtn.textContent = "Creating widget…";
       try {
-        const created = await api.createWidget({ type: meta.widgetType || type, title, config: {}, refresh_interval_sec: 15, data_source_id: dsId });
+        const created = await api.createWidget({ type: meta.widgetType || type, title, config: {}, refresh_interval_sec: meta.refresh || 15, data_source_id: dsId });
         widgets.push(created);
         reindex();
         dlg.close();
         renderWidgets();
+        if (meta.configureAfter) openWidgetModal(created, { onCreated: wopts.onCreated });
+        else if (wopts.onCreated) wopts.onCreated(created);
+        else toast(`Created ${created.title}. Drag it onto the board, or tap ＋ on it.`);
       } catch (e) {
         errEl.textContent = e.message || "Failed to create widget.";
         errEl.classList.remove("hidden");
@@ -1361,17 +1761,7 @@ async function openIntegrationWizard(preType = null) {
   else showStep1();
 }
 
-// ── palette (widget stacks) ───────────────────────────────────────────────────
-
 // ── stack modal ───────────────────────────────────────────────────────────────
-
-function refreshPlacedCard(stack) {
-  if (!grid) return;
-  const gridEl = [...grid.getGridItems()].find((e) => Number(e.dataset.stackId) === stack.id);
-  if (!gridEl) return;
-  const old = gridEl.querySelector(".grid-stack-item-content");
-  if (old) old.replaceWith(buildPlacedContent(stack));
-}
 
 function openStackModal(stack) {
   const dlg = byId("stack-modal");
@@ -1499,6 +1889,7 @@ function openStackModal(stack) {
     await api.updateStack(stack.id, { widget_ids: stack.widget_ids });
     refreshPlacedCard(stack);
     refreshChips(); refreshSel();
+    saveLayoutSoon();
   }
 
   function refreshSel() {
@@ -1507,8 +1898,7 @@ function openStackModal(stack) {
     for (const w of widgets) {
       if (ids.includes(w.id)) continue;
       if (MULTIPAGE_TYPES.has(w.type)) continue;
-      const wEl = document.querySelector(`.sb-widget-item[data-widget-id="${w.id}"]`);
-      if (!wEl) continue;
+      if (!widgetsById[w.id]) continue;
       const opt = document.createElement("option");
       opt.value = w.id; opt.textContent = `${w.title} (${w.type})`;
       sel.appendChild(opt);
@@ -1593,6 +1983,7 @@ async function deleteWidgetAndScrub(w) {
   if (emptied.length) { syncPaletteStates(); saveLayoutSoon(); }
   renderWidgets();
   refreshGridCards();
+  inspector?.render(true);
 }
 
 // Refresh all placed grid cards (e.g. after a widget is renamed/deleted)
@@ -1611,203 +2002,184 @@ function refreshGridCards() {
 
 // ── placed grid items ─────────────────────────────────────────────────────────
 
-function showIntegrationToast() {
-  let toast = document.getElementById("integration-stack-toast");
-  if (!toast) {
-    toast = Object.assign(document.createElement("div"), {
-      id: "integration-stack-toast", className: "integration-toast",
-      textContent: "Multi-page widgets cannot be stacked",
-    });
-    document.body.appendChild(toast);
-  }
-  toast.classList.add("visible");
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => toast.classList.remove("visible"), 2800);
+function showIntegrationToast() { toast("Multi-page widgets can't be stacked"); }
+function showPageFullToast() { toast("No room on this page"); }
+
+function stackWidgets(stack) {
+  return stack.widget_ids.map((id) => widgetsById[id]).filter(Boolean);
+}
+function currentWidgetOf(stack) {
+  const ws = stackWidgets(stack);
+  if (!ws.length) return null;
+  const i = Math.min(cardWidgetIdx[stack.id] || 0, ws.length - 1);
+  return ws[i];
+}
+function hasMultipage(stack) {
+  return stack.widget_ids.some((id) => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
+}
+function gridItemFor(stackId) {
+  return grid ? grid.getGridItems().find((el) => Number(el.dataset.stackId) === stackId) : null;
 }
 
-function showPageFullToast() {
-  let toast = document.getElementById("page-full-toast");
-  if (!toast) {
-    toast = Object.assign(document.createElement("div"), {
-      id: "page-full-toast", className: "integration-toast",
-      textContent: "No room on this page",
-    });
-    document.body.appendChild(toast);
-  }
-  toast.classList.add("visible");
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => toast.classList.remove("visible"), 2800);
-}
-
-function buildPlacedContent(stack, initialPage = 0) {
+function buildPlacedContent(stack) {
   const content = document.createElement("div");
   content.className = "grid-stack-item-content";
 
   const card = document.createElement("div");
-  card.className = "layout-stack-card";
-  if (stack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type))) {
-    card.dataset.integration = "1";
-  }
+  card.className = "layout-stack-card" + (stack.widget_ids.length > 1 ? " is-multi" : "");
+  if (hasMultipage(stack)) card.dataset.integration = "1";
 
+  // Name label (overlay, so the card's content lines up with the display)
   const dragHandle = document.createElement("div");
   dragHandle.className = "layout-drag-handle";
-  dragHandle.title = "Drag to move";
-  const gripSpan = document.createElement("span");
-  gripSpan.className = "layout-drag-grip"; gripSpan.textContent = "⠿";
-  const nameSpan = document.createElement("span");
-  nameSpan.className = "layout-drag-name"; nameSpan.textContent = stack.name;
-  dragHandle.append(gripSpan, nameSpan);
+  dragHandle.append(
+    Object.assign(document.createElement("span"), { className: "layout-drag-grip", textContent: "⠿" }),
+    Object.assign(document.createElement("span"), { className: "layout-drag-name", textContent: stack.name }),
+  );
   card.appendChild(dragHandle);
-
-  // Recomputed on every render (not captured once) so deleting/merging a widget
-  // elsewhere in the app is reflected immediately instead of showing a stale page.
-  function getValidWidgets() {
-    return stack.widget_ids.map((id) => widgetsById[id]).filter(Boolean);
-  }
-  let pageIdx = initialPage;
 
   const widgetArea = document.createElement("div");
   widgetArea.className = "layout-widget-area";
-  // Block clicks on widget internals (links, rack toggles, etc.)
-  // Allow .lc-pag-dot clicks through so within-widget view navigation works.
+  // Widgets are previews here: block their own taps (links, toggles) except view dots.
   widgetArea.addEventListener("click", (e) => {
-    if (!e.target.closest(".lc-pag-dot") && !e.target.closest(".widget-ctrl")) e.stopPropagation();
+    if (!e.target.closest(".lc-pag-dot") && !e.target.closest(".widget-ctrl") && !e.target.closest(".tb-ctrl")) e.stopPropagation();
   }, true);
 
-  // Pagination bar (dots + arrows) — only shown for multi-widget stacks
   const pagBar = document.createElement("div");
   pagBar.className = "lc-pag-bar";
 
   function renderPage() {
-    const validWidgets = getValidWidgets();
-    pageIdx = Math.min(pageIdx, Math.max(0, validWidgets.length - 1));
+    const ws = stackWidgets(stack);
     widgetArea.innerHTML = "";
-    if (!validWidgets.length) {
+    if (!ws.length) {
       widgetArea.appendChild(Object.assign(document.createElement("div"), { className: "placed-empty", textContent: "No widgets" }));
       pagBar.innerHTML = ""; return;
     }
-    widgetArea.appendChild(renderWidget(validWidgets[pageIdx], liveData[validWidgets[pageIdx].id] || null, { editable: true }));
-    if (validWidgets.length <= 1) { pagBar.innerHTML = ""; return; }
-    // Rebuild pagination dots
+    const idx = Math.min(cardWidgetIdx[stack.id] || 0, ws.length - 1);
+    cardWidgetIdx[stack.id] = idx;
+    widgetArea.appendChild(renderWidget(ws[idx], liveData[ws[idx].id] || null, { editable: true }));
     pagBar.innerHTML = "";
+    if (ws.length <= 1) return;
     const dots = document.createElement("div");
     dots.className = "lc-pag-dots";
-    validWidgets.forEach((_, i) => {
-      const d = Object.assign(document.createElement("span"), { className: "lc-pag-dot" + (i === pageIdx ? " active" : "") });
-      d.addEventListener("click", (e) => { e.stopPropagation(); pageIdx = i; renderPage(); });
+    ws.forEach((w, i) => {
+      const lv = liveData[w.id]?.alert?.level;
+      const d = Object.assign(document.createElement("span"), { className: "lc-pag-dot" + (i === idx ? " active" : "") + (lv ? ` alert-${lv}` : "") });
+      d.title = w.title;
+      d.addEventListener("click", (e) => { e.stopPropagation(); cardWidgetIdx[stack.id] = i; renderPage(); if (selectedStackId === stack.id) inspector?.render(true); });
       dots.appendChild(d);
     });
     pagBar.append(dots);
   }
 
   renderPage();
-  card._renderPage   = renderPage;
+  card._renderPage = renderPage;
   card._navigatePage = (dir) => {
-    const validWidgets = getValidWidgets();
-    const next = Math.max(0, Math.min(validWidgets.length - 1, pageIdx + dir));
-    if (next !== pageIdx) { pageIdx = next; renderPage(); }
+    const ws = stackWidgets(stack);
+    const next = Math.max(0, Math.min(ws.length - 1, (cardWidgetIdx[stack.id] || 0) + dir));
+    if (next !== (cardWidgetIdx[stack.id] || 0)) { cardWidgetIdx[stack.id] = next; renderPage(); if (selectedStackId === stack.id) inspector?.render(true); }
   };
   card.append(widgetArea, pagBar);
 
-  // ── merge-drop: accept sidebar widgets dragged onto this card ────────────
-  const vp = byId("preview-viewport");
-  card.addEventListener("dragover", (e) => {
-    if (!e.dataTransfer.types.includes("text/plain")) return;
-    const isIntegrationDrag = e.dataTransfer.types.includes("application/x-tb-integration");
-    if (card.dataset.integration || isIntegrationDrag) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-    card.classList.add("merge-target");
-    vp.classList.remove("drag-over");
-  });
-  card.addEventListener("dragleave", (e) => {
-    if (!card.contains(e.relatedTarget)) card.classList.remove("merge-target");
-  });
-  card.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    card.classList.remove("merge-target");
-    const raw = e.dataTransfer.getData("text/plain");
-    if (!raw.startsWith("widget:")) return;
-    const draggedId = Number(raw.slice(7));
-    const draggedIsIntegration = MULTIPAGE_TYPES.has(widgetsById[draggedId]?.type);
-    // Both are integrations — block with toast, don't let it bubble to the viewport
-    if (card.dataset.integration && draggedIsIntegration) {
-      e.stopPropagation();
-      showIntegrationToast();
-      return;
-    }
-    // One side is an integration — let the event bubble to the viewport drop zone
-    if (card.dataset.integration || draggedIsIntegration) return;
-    e.stopPropagation();
-    await mergeWidgetIntoStack(stack, draggedId);
-  });
-
+  // Card buttons (used when the inspector panel is turned off)
   const actions = document.createElement("div");
   actions.className = "layout-card-actions";
-
-  const editBtn = document.createElement("button");
-  editBtn.className = "layout-card-btn"; editBtn.title = "Edit / Appearance"; editBtn.textContent = "✎";
+  const editBtn = Object.assign(document.createElement("button"), { className: "layout-card-btn", title: "Edit / Appearance", textContent: "✎" });
   editBtn.dataset.tip = "Edit widget appearance and stack settings";
   editBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const currentWidget = getValidWidgets()[pageIdx];
-    const envelope = currentWidget ? liveData[currentWidget.id] : null;
-    openWidgetAppearancePopover(editBtn, currentWidget, envelope?.data, () => openStackModal(stack));
+    const w = currentWidgetOf(stack);
+    openWidgetAppearancePopover(editBtn, w, liveData[w?.id]?.data, () => openStackModal(stack));
   });
-
-  const removeBtn = document.createElement("button");
-  removeBtn.className = "layout-card-btn remove"; removeBtn.title = "Remove from layout"; removeBtn.textContent = "↙";
+  const removeBtn = Object.assign(document.createElement("button"), { className: "layout-card-btn remove", title: "Remove from layout", textContent: "↙" });
   removeBtn.dataset.tip = "Remove from board";
-  removeBtn.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    const item = grid && [...grid.getGridItems()].find((el) => Number(el.dataset.stackId) === stack.id);
-    if (!item) return;
-    grid.removeWidget(item);
-    placedIds.delete(stack.id);
-    phantomStackIds.delete(stack.id);
-    stacks = stacks.filter((s) => s.id !== stack.id);
-    await api.deleteStack(stack.id).catch(() => {});
-    for (const wId of stack.widget_ids) {
-      const wEl = document.querySelector(`.sb-widget-item[data-widget-id="${wId}"]`);
-      if (wEl) { void wEl.offsetWidth; wEl.classList.add("returning"); wEl.addEventListener("animationend", () => wEl.classList.remove("returning"), { once: true }); }
-    }
-    syncPaletteStates();
-    saveLayoutSoon();
-  });
-
+  removeBtn.addEventListener("click", (e) => { e.stopPropagation(); removeCard(stack.id); });
+  for (const b of [editBtn, removeBtn]) b.addEventListener("pointerdown", (e) => e.stopPropagation());
   actions.append(editBtn, removeBtn);
   card.appendChild(actions);
+
+  card.addEventListener("pointerdown", (e) => {
+    if (e.button && e.button !== 0) return;
+    selectStack(stack.id);
+  });
+  card.addEventListener("dblclick", (e) => {
+    if (e.target.closest(".lc-pag-dot")) return;
+    const w = currentWidgetOf(stack);
+    if (w) openWidgetModal(w);
+  });
 
   content.appendChild(card);
   return content;
 }
 
-async function mergeWidgetIntoStack(stack, widgetId) {
-  const widget = widgetsById[widgetId];
-  if (!widget || stack.widget_ids.includes(widgetId)) return;
-  if (MULTIPAGE_TYPES.has(widget.type)) return;
-  if (stack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type))) return;
+function refreshPlacedCard(stack) {
+  const el = gridItemFor(stack.id);
+  if (!el) return;
+  const old = el.querySelector(".grid-stack-item-content");
+  if (old) old.replaceWith(buildPlacedContent(stack));
+  el.classList.toggle("is-selected", stack.id === selectedStackId);
+}
 
-  const newIds = [...stack.widget_ids, widgetId];
-  const updated = await api.updateStack(stack.id, { widget_ids: newIds });
-  stack.widget_ids = updated.widget_ids;
-
-
-  // Rebuild the card content, then animate the new card
-  const gridEl = grid && [...grid.getGridItems()].find((e) => Number(e.dataset.stackId) === stack.id);
-  if (gridEl) {
-    const old = gridEl.querySelector(".grid-stack-item-content");
-    const newContent = buildPlacedContent(stack);
-    if (old) old.replaceWith(newContent);
-    const newCard = newContent.querySelector(".layout-stack-card");
-    if (newCard) {
-      newCard.classList.add("merging");
-      newCard.addEventListener("animationend", () => newCard.classList.remove("merging"), { once: true });
-    }
+function buildGridItem(stack, node, type = "stack") {
+  const item = document.createElement("div");
+  item.className = "grid-stack-item";
+  item.dataset.stackId = stack.id;
+  item.dataset.itemType = type;
+  if (node) {
+    const w = Math.max(MIN_W, Math.min(COLS, node.w));
+    const h = Math.max(MIN_H, Math.min(ROWS, node.h));
+    item.setAttribute("gs-x", Math.max(0, Math.min(COLS - w, node.x)));
+    item.setAttribute("gs-y", Math.max(0, Math.min(ROWS - h, node.y)));
+    item.setAttribute("gs-w", w);
+    item.setAttribute("gs-h", h);
+    if (node.locked) { item.setAttribute("gs-locked", "true"); item.setAttribute("gs-no-move", "true"); item.setAttribute("gs-no-resize", "true"); item.classList.add("is-locked"); }
+  } else {
+    item.setAttribute("gs-w", DEF_W);
+    item.setAttribute("gs-h", DEF_H);
   }
+  item.setAttribute("gs-min-w", MIN_W);
+  item.setAttribute("gs-min-h", MIN_H);
+  item.appendChild(buildPlacedContent(stack));
+  return item;
+}
 
+function addCard(stack, node, type = "widget") {
+  const gsEl = byId("gs-grid");
+  const item = buildGridItem(stack, node, type);
+  gsEl.appendChild(item);
+  grid.makeWidget(item);
+  placedIds.add(stack.id);
+  phantomStackIds.add(stack.id);
+  syncPaletteStates();
+  return item;
+}
+
+// ── card actions ─────────────────────────────────────────────────────────────
+
+function pageNodes() {
+  return grid ? grid.getGridItems().map((el) => ({ ...el.gridstackNode, stackId: Number(el.dataset.stackId), el })) : [];
+}
+
+// Place a widget on the current page: at `at` if given and free, else the
+// nearest free space (shrinking it if needed).
+async function placeWidget(widgetId, at = null) {
+  const w = widgetsById[widgetId];
+  if (!w) return null;
+  const nodes = pageNodes();
+  let spot = at && G.isFree(at, nodes, COLS, ROWS) ? at : null;
+  if (!spot) {
+    const [dw, dh] = at ? [at.w, at.h] : defaultSize(w.type);
+    spot = G.findFreeSpot(nodes, COLS, ROWS, dw, dh, { px: at?.x || 0, py: at?.y || 0, minW: MIN_W, minH: MIN_H });
+  }
+  if (!spot) { showPageFullToast(); return null; }
+  const stack = await api.createStack({ name: w.title, widget_ids: [widgetId] });
+  stacks.push(stack);
+  const item = addCard(stack, spot, "widget");
+  if (!at) autoFitHeight(item);
   saveLayoutSoon();
+  selectStack(stack.id);
+  renderWidgets();
+  return stack;
 }
 
 // Expand a just-placed grid item's height so its widget area doesn't scroll.
@@ -1816,11 +2188,8 @@ function autoFitHeight(item) {
     const widgetArea = item.querySelector(".layout-widget-area");
     if (!widgetArea) return;
     const overflow = widgetArea.scrollHeight - widgetArea.clientHeight;
-    if (overflow <= 2) return; // within rounding tolerance
-    const gsEl = byId("gs-grid");
-    const pxPerRow = gsEl.getBoundingClientRect().height / ROWS;
-    if (pxPerRow <= 0) return;
-    const extraRows = Math.ceil(overflow / pxPerRow);
+    if (overflow <= 2) return;
+    const extraRows = Math.ceil(overflow / (dispH / ROWS));
     const n = item.gridstackNode;
     if (!n) return;
     const newH = Math.min(ROWS - n.y, n.h + extraRows);
@@ -1828,178 +2197,415 @@ function autoFitHeight(item) {
   });
 }
 
-// Find best placement for a new card near the drop point.
-// Returns { x, y, w, h } — width shrinks to fill available gap, height kept at preferH.
-function findFreeCellAndSize(preferX, preferY, preferW, preferH) {
-  const occupied = new Set();
-  for (const el of grid.getGridItems()) {
-    const n = el.gridstackNode;
-    if (!n) continue;
-    for (let r = n.y; r < n.y + n.h; r++)
-      for (let c = n.x; c < n.x + n.w; c++)
-        occupied.add(`${r},${c}`);
-  }
-
-  // How many consecutive free columns starting at (x,y) for height h?
-  const gapWidth = (x, y, h) => {
-    let w = 0;
-    while (x + w < COLS) {
-      let colFree = true;
-      for (let r = y; r < y + h && colFree; r++)
-        if (occupied.has(`${r},${x + w}`)) colFree = false;
-      if (!colFree) break;
-      w++;
-    }
-    return w;
-  };
-
-  const tryPlace = (x, y) => {
-    if (x < 0 || y < 0 || y + preferH > ROWS) return null;
-    const gw = gapWidth(x, y, preferH);
-    if (gw < MIN_W) return null;
-    return { x, y, w: Math.min(gw, preferW), h: preferH };
-  };
-
-  const direct = tryPlace(preferX, preferY);
-  if (direct) return direct;
-
-  // BFS outward from drop point
-  const seen = new Set([`${preferX},${preferY}`]);
-  const queue = [[preferX, preferY]];
-  while (queue.length) {
-    const [x, y] = queue.shift();
-    const r = tryPlace(x, y);
-    if (r) return r;
-    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]) {
-      const nx = x + dx, ny = y + dy, key = `${nx},${ny}`;
-      if (!seen.has(key) && nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS) {
-        seen.add(key); queue.push([nx, ny]);
-      }
-    }
-  }
-  return null; // page is full
+async function removeCard(stackId, { undoable = true } = {}) {
+  const item = gridItemFor(stackId);
+  const stack = stacks.find((s) => s.id === stackId);
+  if (!item || !stack) return;
+  item.classList.add("ejecting");
+  await new Promise((r) => setTimeout(r, 180));
+  grid.removeWidget(item);
+  placedIds.delete(stackId);
+  phantomStackIds.delete(stackId);
+  stacks = stacks.filter((s) => s.id !== stackId);
+  if (selectedStackId === stackId) selectStack(null);
+  await api.deleteStack(stackId).catch(() => {});
+  syncPaletteStates();
+  saveLayoutSoon();
+  renderWidgets();
+  if (undoable) toast(`Removed ${stack.name}`, { action: { label: "Undo", run: () => history?.undo() } });
 }
 
-function buildGridItem(stack, node, type = "stack") {
-  const item = document.createElement("div");
-  item.className = "grid-stack-item";
-  item.dataset.stackId = stack.id;
-  item.dataset.itemType = type; // "widget" or "stack" — drives drop-zone selection
+async function duplicateCard(stackId) {
+  const stack = stacks.find((s) => s.id === stackId);
+  const src = gridItemFor(stackId)?.gridstackNode;
+  if (!stack || !src) return;
+  const nodes = pageNodes();
+  const tries = [{ ...src, x: src.x + src.w }, { ...src, y: src.y + src.h }, { ...src, x: src.x - src.w }, { ...src, y: src.y - src.h }];
+  let spot = tries.find((n) => G.isFree({ x: n.x, y: n.y, w: n.w, h: n.h }, nodes, COLS, ROWS));
+  if (spot) spot = { x: spot.x, y: spot.y, w: spot.w, h: spot.h };
+  else spot = G.findFreeSpot(nodes, COLS, ROWS, src.w, src.h, { px: src.x, py: src.y, minW: MIN_W, minH: MIN_H });
+  if (!spot) { showPageFullToast(); return; }
+  const copy = await api.createStack({ name: stack.name, widget_ids: [...stack.widget_ids], cycle_mode: stack.cycle_mode });
+  stacks.push(copy);
+  addCard(copy, spot, gridItemFor(stackId)?.dataset.itemType || "stack");
+  saveLayoutSoon();
+  selectStack(copy.id);
+}
 
-  if (node) {
-    const clampedY = Math.min(node.y, ROWS - Math.max(node.h, MIN_H));
-    item.setAttribute("gs-x", Math.max(0, node.x));
-    item.setAttribute("gs-y", Math.max(0, clampedY));
-    item.setAttribute("gs-w", Math.max(MIN_W, node.w));
-    item.setAttribute("gs-h", Math.max(MIN_H, node.h));
+function setLocked(stackId, on) {
+  const el = gridItemFor(stackId);
+  if (!el) return;
+  grid.update(el, { locked: on, noMove: on, noResize: on });
+  el.classList.toggle("is-locked", on);
+  saveLayoutSoon();
+  updateToolbar();
+  inspector?.render(true);
+}
+
+function fillCard(stackId, edge = null) {
+  const el = gridItemFor(stackId);
+  if (!el) return;
+  const n = el.gridstackNode;
+  const others = pageNodes().filter((o) => o.el !== el);
+  const cur = { x: n.x, y: n.y, w: n.w, h: n.h };
+  const next = edge ? G.growEdge(cur, others, COLS, ROWS, edge) : G.fillSpace(cur, [cur, ...others], COLS, ROWS);
+  if (JSON.stringify(next) !== JSON.stringify(cur)) { grid.update(el, next); saveLayoutSoon(); }
+}
+
+function updateNode(stackId, patch) {
+  const el = gridItemFor(stackId);
+  if (!el) return;
+  const n = el.gridstackNode;
+  const next = { x: n.x, y: n.y, w: n.w, h: n.h, ...patch };
+  next.w = Math.max(MIN_W, Math.min(COLS, next.w)); next.h = Math.max(MIN_H, Math.min(ROWS, next.h));
+  next.x = Math.max(0, Math.min(COLS - next.w, next.x)); next.y = Math.max(0, Math.min(ROWS - next.h, next.y));
+  if (!G.isFree(next, pageNodes().filter((o) => o.el !== el), COLS, ROWS)) { toast("That space is taken"); inspector?.render(true); return; }
+  grid.update(el, next);
+  saveLayoutSoon();
+}
+
+async function moveCardToPage(stackId, pageIdx, { copy = false } = {}) {
+  if (pageIdx === currentPageIdx || !board.pages[pageIdx]) return;
+  const el = gridItemFor(stackId);
+  const stack = stacks.find((s) => s.id === stackId);
+  if (!el || !stack) return;
+  const n = el.gridstackNode;
+  const target = board.pages[pageIdx];
+  const targetNodes = target.layout || [];
+  let spot = { x: n.x, y: n.y, w: n.w, h: n.h };
+  if (!G.isFree(spot, targetNodes, COLS, ROWS)) spot = G.findFreeSpot(targetNodes, COLS, ROWS, n.w, n.h, { px: n.x, py: n.y, minW: MIN_W, minH: MIN_H });
+  if (!spot) { toast(`No room on ${target.name}`); return; }
+  let movedId = stackId;
+  if (copy) {
+    const c = await api.createStack({ name: stack.name, widget_ids: [...stack.widget_ids], cycle_mode: stack.cycle_mode });
+    stacks.push(c);
+    movedId = c.id;
   } else {
-    item.setAttribute("gs-w", DEF_W);
-    item.setAttribute("gs-h", DEF_H);
+    grid.removeWidget(el);
+    placedIds.delete(stackId);
+    if (selectedStackId === stackId) selectStack(null);
   }
-  item.setAttribute("gs-min-w", MIN_W);
-  item.setAttribute("gs-min-h", MIN_H);
-
-  item.appendChild(buildPlacedContent(stack));
-  return item;
+  target.layout = [...targetNodes, { stack_id: movedId, ...spot, item_type: el.dataset.itemType || "stack" }];
+  saveLayoutSoon();
+  toast(`${copy ? "Copied" : "Moved"} ${stack.name} to ${target.name}`, { action: { label: "Go there", run: () => switchPage(pageIdx) } });
 }
 
-// ── drop zone (palette → grid) ────────────────────────────────────────────────
+async function mergeWidgetIntoStack(stack, widgetId) {
+  const widget = widgetsById[widgetId];
+  if (!widget || stack.widget_ids.includes(widgetId)) return;
+  if (MULTIPAGE_TYPES.has(widget.type) || hasMultipage(stack)) { showIntegrationToast(); return; }
+  const updated = await api.updateStack(stack.id, { widget_ids: [...stack.widget_ids, widgetId] });
+  stack.widget_ids = updated.widget_ids;
+  cardWidgetIdx[stack.id] = stack.widget_ids.length - 1;
+  refreshPlacedCard(stack);
+  gridItemFor(stack.id)?.querySelector(".layout-stack-card")?.classList.add("merging");
+  saveLayoutSoon();
+  inspector?.render(true);
+}
 
-function setupDropZone() {
-  const vp   = byId("preview-viewport");
-  const gsEl = byId("gs-grid");
+async function mergeStacks(targetStackId, draggedStackId) {
+  const target = stacks.find((s) => s.id === targetStackId);
+  const dragged = stacks.find((s) => s.id === draggedStackId);
+  if (!target || !dragged) return false;
+  if (hasMultipage(target) || hasMultipage(dragged)) { showIntegrationToast(); return false; }
+  const updated = await api.updateStack(target.id, { widget_ids: [...new Set([...target.widget_ids, ...dragged.widget_ids])] });
+  target.widget_ids = updated.widget_ids;
+  const el = gridItemFor(dragged.id);
+  if (el) grid.removeWidget(el);
+  placedIds.delete(dragged.id);
+  phantomStackIds.delete(dragged.id);
+  stacks = stacks.filter((s) => s.id !== dragged.id);
+  await api.deleteStack(dragged.id).catch(() => {});
+  refreshPlacedCard(target);
+  gridItemFor(target.id)?.querySelector(".layout-stack-card")?.classList.add("merging");
+  selectStack(target.id);
+  saveLayoutSoon();
+  return true;
+}
 
-  vp.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-    vp.classList.add("drag-over");
+// ── selection + floating toolbar ─────────────────────────────────────────────
+
+function selectStack(stackId) {
+  if (stackId === selectedStackId) { updateToolbar(); return; }
+  selectedStackId = stackId;
+  for (const el of grid?.getGridItems() || []) el.classList.toggle("is-selected", Number(el.dataset.stackId) === stackId);
+  document.body.classList.toggle("has-selection", stackId != null);
+  updateToolbar();
+  updateStatus();
+  inspector?.render(true);
+}
+
+function toolbarButton(label, title, onClick, cls = "") {
+  const b = Object.assign(document.createElement("button"), { type: "button", className: cls, textContent: label, title });
+  b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  b.addEventListener("click", (e) => { e.stopPropagation(); onClick(e); });
+  return b;
+}
+
+function updateToolbar() {
+  const bar = byId("card-toolbar");
+  if (!bar) return;
+  const el = selectedStackId != null ? gridItemFor(selectedStackId) : null;
+  const stack = stacks.find((s) => s.id === selectedStackId);
+  if (!el || !stack || document.body.classList.contains("is-dragging")) { bar.classList.add("hidden"); return; }
+  const locked = !!el.gridstackNode?.locked;
+  bar.innerHTML = "";
+  bar.append(
+    toolbarButton("Edit", "Edit the widget's settings", () => { const w = currentWidgetOf(stack); if (w) openWidgetModal(w); }),
+    toolbarButton("Stack ▾", "Add another widget to this card", (e) => openStackMenu(stack, e.currentTarget)),
+    toolbarButton("Duplicate", "Duplicate (Ctrl+D)", () => duplicateCard(stack.id)),
+    toolbarButton("Fill", "Grow into empty space (F)", () => fillCard(stack.id)),
+    toolbarButton(locked ? "Unlock" : "Lock", "Lock in place (L)", () => setLocked(stack.id, !locked)),
+    toolbarButton("Remove", "Remove from the page (Delete)", () => removeCard(stack.id), "danger"),
+  );
+  bar.classList.remove("hidden");
+  const areaEl = byId("canvas-area");
+  const area = areaEl.getBoundingClientRect();
+  const vp = byId("preview-viewport").getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  const bw = bar.offsetWidth, bh = bar.offsetHeight;
+  // Above the card if that stays inside the preview (never over the page
+  // tabs), else below it, else just inside its top edge.
+  let y;
+  if (r.top - bh - 8 >= vp.top) y = r.top - bh - 8;
+  else if (r.bottom + bh + 8 <= vp.bottom) y = r.bottom + 8;
+  else y = Math.max(vp.top, r.top) + 8;
+  const top = y - area.top + areaEl.scrollTop;
+  let left = r.left - area.left + r.width / 2 - bw / 2 + areaEl.scrollLeft;
+  left = Math.max(6, Math.min(area.width - bw - 6, left));
+  bar.style.top = `${top}px`;
+  bar.style.left = `${left}px`;
+}
+
+function stackableWidgets(stack) {
+  if (hasMultipage(stack)) return [];
+  return widgets.filter((w) => !stack.widget_ids.includes(w.id) && !MULTIPAGE_TYPES.has(w.type));
+}
+
+function openStackMenu(stack, anchor) {
+  document.querySelector(".ed-menu")?.remove();
+  const menu = Object.assign(document.createElement("div"), { className: "ed-menu" });
+  const options = stackableWidgets(stack);
+  if (!options.length) {
+    menu.appendChild(Object.assign(document.createElement("div"), { className: "ed-menu-empty", textContent: hasMultipage(stack) ? "Multi-page widgets can't be stacked." : "No other widgets to add." }));
+  }
+  for (const w of options) {
+    const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${w.title}` });
+    b.appendChild(Object.assign(document.createElement("small"), { textContent: w.type }));
+    b.addEventListener("click", () => { menu.remove(); mergeWidgetIntoStack(stack, w.id); });
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 6}px`;
+  menu.style.left = `${Math.min(window.innerWidth - menu.offsetWidth - 8, r.left)}px`;
+  setTimeout(() => document.addEventListener("pointerdown", function close(e) {
+    if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("pointerdown", close); }
+  }), 0);
+}
+
+function updateStatus() {
+  const bar = byId("statusbar");
+  if (!bar) return;
+  const page = currentPage();
+  const sel = stacks.find((s) => s.id === selectedStackId);
+  const n = sel ? gridItemFor(sel.id)?.gridstackNode : null;
+  const parts = [
+    `${dispW} × ${dispH}`,
+    `${COLS} × ${ROWS} grid`,
+    page?.mode === "tiled" ? "Tiled page" : "Free page",
+    `Preview ${Math.round(stageScale * 100)}%`,
+  ];
+  if (n) parts.push(`${sel.name}: ${n.x},${n.y} · ${n.w} × ${n.h} cells · ${cellPx(n.w, n.h)}`);
+  bar.textContent = parts.join("   ·   ");
+}
+
+// ── hold-to-stack while dragging ─────────────────────────────────────────────
+// Hovering the middle of another card for a moment arms "stack onto it"; the
+// card is locked meanwhile so GridStack doesn't push it out from under you.
+
+const pointer = { x: 0, y: 0 };
+const dwell = { el: null, armed: false, timer: null, lockedByUs: false };
+const DWELL_MS = 450;
+
+function trackPointer(e) {
+  const t = e.touches?.[0] || e;
+  pointer.x = t.clientX; pointer.y = t.clientY;
+  if ("altKey" in e) pointer.alt = e.altKey;
+  if (document.body.classList.contains("is-dragging")) updateDwell();
+}
+["mousemove", "pointermove", "touchmove"].forEach((t) => document.addEventListener(t, trackPointer, { passive: true, capture: true }));
+
+function clearDwell() {
+  clearTimeout(dwell.timer);
+  if (dwell.el) {
+    dwell.el.classList.remove("stack-target", "stack-armed");
+    if (dwell.lockedByUs) grid.update(dwell.el, { locked: false });
+  }
+  Object.assign(dwell, { el: null, armed: false, timer: null, lockedByUs: false });
+}
+
+let draggingEl = null; // in-grid drag source (null for drag-in from the library)
+let dragInWidgetId = null;
+function updateDwell() {
+  let found = null;
+  for (const el of grid.getGridItems()) {
+    if (el === draggingEl || el.classList.contains("grid-stack-placeholder")) continue;
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width * 0.25, cy = r.top + r.height * 0.25;
+    if (pointer.x >= cx && pointer.x <= r.right - r.width * 0.25 && pointer.y >= cy && pointer.y <= r.bottom - r.height * 0.25) { found = el; break; }
+  }
+  if (found === dwell.el) return;
+  clearDwell();
+  if (!found) return;
+  const target = stacks.find((s) => s.id === Number(found.dataset.stackId));
+  const draggedStack = draggingEl ? stacks.find((s) => s.id === Number(draggingEl.dataset.stackId)) : null;
+  const draggedMulti = draggedStack ? hasMultipage(draggedStack) : MULTIPAGE_TYPES.has(widgetsById[dragInWidgetId]?.type);
+  if (!target || hasMultipage(target) || draggedMulti) return;
+  dwell.el = found;
+  if (!found.gridstackNode?.locked) { grid.update(found, { locked: true }); dwell.lockedByUs = true; }
+  found.classList.add("stack-target");
+  dwell.timer = setTimeout(() => { dwell.armed = true; found.classList.add("stack-armed"); }, DWELL_MS);
+}
+
+// ── size readout on the placeholder ──────────────────────────────────────────
+function showSizeReadout(el) {
+  const n = el?.gridstackNode;
+  const ph = byId("gs-grid").querySelector(".grid-stack-placeholder > .placeholder-content");
+  if (!n || !ph) return;
+  ph.dataset.size = `${n.w} × ${n.h} · ${cellPx(n.w, n.h)}`;
+}
+
+// ── draw to place ────────────────────────────────────────────────────────────
+
+function cellAt(clientX, clientY) {
+  const r = byId("gs-grid").getBoundingClientRect();
+  const x = Math.floor(((clientX - r.left) / r.width) * COLS);
+  const y = Math.floor(((clientY - r.top) / r.height) * ROWS);
+  return { x: Math.max(0, Math.min(COLS - 1, x)), y: Math.max(0, Math.min(ROWS - 1, y)) };
+}
+
+function setupDrawToPlace() {
+  const stage = byId("ed-stage");
+  const rectEl = byId("draw-rect");
+  stage.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || e.target.closest(".grid-stack-item, .ed-divider, .ed-quickpick")) return;
+    selectStack(null);
+    if (!prefs.drawToPlace || currentPage().mode === "tiled") return;
+    const start = cellAt(e.clientX, e.clientY);
+    let rect = null, moved = false;
+    stage.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const c = cellAt(ev.clientX, ev.clientY);
+      const x = Math.min(start.x, c.x), y = Math.min(start.y, c.y);
+      rect = { x, y, w: Math.abs(c.x - start.x) + 1, h: Math.abs(c.y - start.y) + 1 };
+      if (!moved && (rect.w > 1 || rect.h > 1)) moved = true;
+      if (!moved) return;
+      const ok = rect.w >= MIN_W && rect.h >= MIN_H && G.isFree(rect, pageNodes(), COLS, ROWS);
+      rectEl.classList.remove("hidden");
+      rectEl.classList.toggle("bad", !ok);
+      Object.assign(rectEl.style, {
+        left: `${rect.x * dispW / COLS}px`, top: `${rect.y * dispH / ROWS}px`,
+        width: `${rect.w * dispW / COLS}px`, height: `${rect.h * dispH / ROWS}px`,
+      });
+      rectEl.firstElementChild.textContent = `${rect.w} × ${rect.h}`;
+    };
+    const up = () => {
+      stage.removeEventListener("pointermove", move);
+      stage.removeEventListener("pointerup", up);
+      stage.removeEventListener("pointercancel", up);
+      if (!moved || !rect) { rectEl.classList.add("hidden"); return; }
+      if (rect.w < MIN_W || rect.h < MIN_H || !G.isFree(rect, pageNodes(), COLS, ROWS)) {
+        rectEl.classList.add("hidden");
+        if (rect.w < MIN_W || rect.h < MIN_H) toast(`Cards are at least ${MIN_W} × ${MIN_H} cells`);
+        else toast("That space overlaps another card");
+        return;
+      }
+      openQuickPick(rect, rectEl);
+    };
+    stage.addEventListener("pointermove", move);
+    stage.addEventListener("pointerup", up);
+    stage.addEventListener("pointercancel", up);
   });
+}
 
-  vp.addEventListener("dragleave", (e) => {
-    if (!vp.contains(e.relatedTarget)) vp.classList.remove("drag-over");
+function openQuickPick(rect, rectEl) {
+  document.querySelector(".ed-quickpick")?.remove();
+  const pick = Object.assign(document.createElement("div"), { className: "ed-quickpick" });
+  const input = Object.assign(document.createElement("input"), { type: "search", placeholder: "What goes here?", className: "sb-form-input" });
+  const list = Object.assign(document.createElement("div"), { className: "ed-quickpick-list" });
+  pick.append(input, list);
+  const onBoard = placedWidgetIds();
+  const close = () => { pick.remove(); rectEl.classList.add("hidden"); document.removeEventListener("pointerdown", outside, true); };
+  const outside = (e) => { if (!pick.contains(e.target)) close(); };
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    list.innerHTML = "";
+    const ws = widgets.filter((w) => !q || w.title.toLowerCase().includes(q) || w.type.includes(q))
+      .sort((a, b) => onBoard.has(a.id) - onBoard.has(b.id) || a.title.localeCompare(b.title));
+    for (const w of ws.slice(0, 12)) {
+      const b = Object.assign(document.createElement("button"), { type: "button" });
+      b.append(Object.assign(document.createElement("span"), { textContent: w.title }),
+        Object.assign(document.createElement("small"), { textContent: w.type + (onBoard.has(w.id) ? " · on a page" : "") }));
+      b.addEventListener("click", async () => { close(); await placeWidget(w.id, rect); });
+      list.appendChild(b);
+    }
+    const types = WIDGET_TYPES.filter((t) => !q || t.label.toLowerCase().includes(q) || t.type.includes(q));
+    if (types.length) list.appendChild(Object.assign(document.createElement("div"), { className: "ed-quickpick-sep", textContent: "New widget" }));
+    for (const t of types) {
+      const b = Object.assign(document.createElement("button"), { type: "button", className: "is-new" });
+      b.append(Object.assign(document.createElement("span"), { textContent: `${t.icon}  ${t.label}` }));
+      b.addEventListener("click", () => { close(); createThenPlace(t.type, rect); });
+      list.appendChild(b);
+    }
+  };
+  input.addEventListener("input", draw);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+    if (e.key === "Enter") list.querySelector("button")?.click();
   });
+  draw();
+  byId("canvas-area").appendChild(pick);
+  const area = byId("canvas-area").getBoundingClientRect();
+  const r = rectEl.getBoundingClientRect();
+  const left = Math.min(area.width - pick.offsetWidth - 8, Math.max(8, r.left - area.left));
+  let top = r.bottom - area.top + 8;
+  if (top + pick.offsetHeight > area.height) top = Math.max(8, r.top - area.top - pick.offsetHeight - 8);
+  pick.style.left = `${left + byId("canvas-area").scrollLeft}px`;
+  pick.style.top = `${top + byId("canvas-area").scrollTop}px`;
+  input.focus();
+  setTimeout(() => document.addEventListener("pointerdown", outside, true), 0);
+}
 
-  vp.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    vp.classList.remove("drag-over");
-
-    const raw = e.dataTransfer.getData("text/plain");
-    if (!raw.startsWith("widget:")) return;
-
-    const widgetId = Number(raw.slice(7));
-    const widget = widgetsById[widgetId];
-    if (!widget) return;
-
-    const rect  = gsEl.getBoundingClientRect();
-    const cellW = rect.width  / COLS;
-    const cellH = rect.height / ROWS;
-    const rawX = Math.max(0, Math.min(COLS - DEF_W, Math.floor((e.clientX - rect.left) / cellW)));
-    const rawY = Math.max(0, Math.min(ROWS - DEF_H, Math.floor((e.clientY - rect.top)  / cellH)));
-
-    const placement = findFreeCellAndSize(rawX, rawY, DEF_W, DEF_H);
-    if (!placement) { showPageFullToast(); return; }
-
-    // Create a phantom stack — deleted when the card is removed
-    const stack = await api.createStack({ name: widget.title, widget_ids: [widgetId] });
-    stacks.push(stack);
-    phantomStackIds.add(stack.id);
-
-    const { x: gx, y: gy, w: gw, h: gh } = placement;
-    const item = buildGridItem(stack, { x: gx, y: gy, w: gw, h: gh }, "widget");
-    gsEl.appendChild(item);
-    grid.makeWidget(item);
-    autoFitHeight(item);
-
-    placedIds.add(stack.id);
-    syncPaletteStates();
-    saveLayoutSoon();
-  });
+function createThenPlace(type, rect) {
+  const onCreated = (w) => placeWidget(w.id, rect);
+  if (type === "nowplaying") return openIntegrationWizard(null, { onCreated, only: ["plex", "jellyfin"] });
+  const integ = Object.entries(INTEGRATION_META).find(([, m]) => (m.widgetType || null) === type && !m.optional);
+  if (integ) return openIntegrationWizard(integ[0], { onCreated });
+  openWidgetModal(null, { defaultType: type, typeFilter: [type], onCreated });
 }
 
 // ── live data / SSE ───────────────────────────────────────────────────────────
 
-function refreshWidgetArea(el, stack) {
-  const content = el.querySelector(".grid-stack-item-content");
-  const card    = content?.querySelector(".layout-stack-card");
-  if (!card) return;
-
-  // Prefer the initGridItem closure — it preserves pageIdx, arrows, and dot listeners.
-  if (card._renderPage) { card._renderPage(); return; }
-
-  // Fallback for any card not yet initialised via initGridItem.
-  const validWidgets = stack.widget_ids.map((id) => widgetsById[id]).filter(Boolean);
-  const area    = card.querySelector(".layout-widget-area");
-  const pagBar  = card.querySelector(".lc-pag-bar");
-  if (!area) return;
-
-  area.innerHTML = "";
-  if (!validWidgets.length) {
-    area.appendChild(Object.assign(document.createElement("div"), { className: "placed-empty", textContent: "No widgets" }));
-    if (pagBar) pagBar.innerHTML = "";
-    return;
-  }
-  area.appendChild(renderWidget(validWidgets[0], liveData[validWidgets[0].id] || null, { editable: true }));
-  if (pagBar) pagBar.innerHTML = "";
+function refreshWidgetArea(el) {
+  const card = el.querySelector(".layout-stack-card");
+  card?._renderPage?.();
 }
 
-// Re-render every placed card showing the given widget, using whatever data
-// is currently cached in liveData (no refetch).
 function rerenderCardsFor(widgetId) {
   if (!grid) return;
-  // Stream widgets play continuously — re-rendering would interrupt the video
-  if (widgets.find(w => w.id === widgetId)?.type === "stream") return;
+  if (widgetsById[widgetId]?.type === "stream") return; // re-rendering would interrupt the video
   for (const el of grid.getGridItems()) {
-    const stackId = Number(el.dataset.stackId);
-    const stack   = stacks.find((s) => s.id === stackId);
-    if (stack?.widget_ids.includes(widgetId)) {
-      refreshWidgetArea(el, stack);
-    }
+    const stack = stacks.find((s) => s.id === Number(el.dataset.stackId));
+    if (stack?.widget_ids.includes(widgetId)) refreshWidgetArea(el);
   }
 }
 
 function onEnvelope(env) {
   liveData[env.widget_id] = env;
   rerenderCardsFor(env.widget_id);
+  const sel = stacks.find((s) => s.id === selectedStackId);
+  if (sel && currentWidgetOf(sel)?.id === env.widget_id) inspector?.render(false);
 }
 
 function connectSSE() {
@@ -2007,136 +2613,163 @@ function connectSSE() {
   es.onmessage = (e) => {
     try {
       const env = JSON.parse(e.data);
-      if (env.type === "widget_update") {
-        // Config/appearance changed (e.g. scale or colors). Re-render the
-        // affected cards from cached data so the widget keeps its current
-        // contents instead of flashing its "Loading…" state. The dataless
-        // control envelope must NOT overwrite the cached data envelope.
-        rerenderCardsFor(env.widget_id);
-      } else if (env.type === "config_restored") {
-        window.location.reload();
-      } else if (env.type === "settings_update") {
-        byId("preview-viewport")?.style.setProperty("--widget-font-scale", env.data?.widget_font_scale || "1");
-      } else {
-        onEnvelope(env);
-      }
+      if (env.type === "widget_update") rerenderCardsFor(env.widget_id);
+      else if (env.type === "config_restored") window.location.reload();
+      else if (env.type === "settings_update") byId("preview-viewport")?.style.setProperty("--widget-font-scale", env.data?.widget_font_scale || "1");
+      else if (env.widget_id != null) onEnvelope(env);
     } catch (_) {}
   };
 }
 
 // ── page tabs ─────────────────────────────────────────────────────────────────
 
+function updateTabMinimaps() {
+  document.querySelectorAll(".page-tab").forEach((tab) => {
+    const page = board.pages[Number(tab.dataset.pageIdx)];
+    const old = tab.querySelector(".ed-minimap");
+    if (page && old) old.replaceWith(miniMap(page.layout || [], COLS, ROWS));
+  });
+}
+
 function renderPageTabs() {
   const bar   = byId("page-tabs-bar");
   const addBtn = byId("page-tab-add");
   for (const el of [...bar.querySelectorAll(".page-tab")]) el.remove();
 
-  for (let i = 0; i < board.pages.length; i++) {
-    const page = board.pages[i];
+  board.pages.forEach((page, i) => {
     const tab  = document.createElement("div");
-    tab.className = "page-tab" + (i === currentPageIdx ? " active" : "");
+    tab.className = "page-tab" + (i === currentPageIdx ? " active" : "") + (page.mode === "tiled" ? " is-tiled" : "");
     tab.dataset.pageIdx = i;
+    tab.title = `${page.name}${page.mode === "tiled" ? " · tiled" : ""}${page.rotate === false ? " · not in rotation" : ""}`;
 
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "page-tab-name";
-    nameSpan.textContent = page.name;
+    const nameSpan = Object.assign(document.createElement("span"), { className: "page-tab-name", textContent: page.name });
 
     function startRename() {
-      const inp = document.createElement("input");
-      inp.className = "page-tab-input";
-      inp.value = page.name;
+      const inp = Object.assign(document.createElement("input"), { className: "page-tab-input", value: page.name });
       inp.style.width = Math.max(60, nameSpan.offsetWidth + 10) + "px";
       nameSpan.replaceWith(inp);
       inp.focus(); inp.select();
+      let done = false;
       const commit = () => {
+        if (done) return; done = true;
         page.name = inp.value.trim() || page.name;
         inp.replaceWith(nameSpan);
         nameSpan.textContent = page.name;
         saveLayoutSoon();
+        inspector?.render(true);
       };
       inp.addEventListener("blur", commit);
       inp.addEventListener("keydown", (e2) => {
         if (e2.key === "Enter")  { e2.preventDefault(); commit(); }
-        if (e2.key === "Escape") { inp.replaceWith(nameSpan); }
+        if (e2.key === "Escape") { done = true; inp.replaceWith(nameSpan); }
       });
     }
     nameSpan.addEventListener("dblclick", (e) => { e.stopPropagation(); startRename(); });
 
-    const renameBtn = document.createElement("button");
-    renameBtn.className = "page-tab-rename-btn";
-    renameBtn.title = "Rename page";
-    renameBtn.textContent = "✎";
-    renameBtn.addEventListener("click", (e) => { e.stopPropagation(); startRename(); });
-
-    // Drag-to-reorder
+    // drag tabs to reorder (native drag is fine here: mouse only, non-essential)
     tab.draggable = true;
     tab.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text/plain", String(i));
+      e.dataTransfer.setData("application/x-tb-page", String(i));
       e.dataTransfer.effectAllowed = "move";
       tab.classList.add("dragging");
     });
     tab.addEventListener("dragend", () => tab.classList.remove("dragging"));
-    tab.addEventListener("dragover", (e) => { e.preventDefault(); tab.classList.add("drag-over"); });
+    tab.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("application/x-tb-page")) { e.preventDefault(); tab.classList.add("drag-over"); } });
     tab.addEventListener("dragleave", () => tab.classList.remove("drag-over"));
     tab.addEventListener("drop", (e) => {
       e.preventDefault(); tab.classList.remove("drag-over");
-      const fromIdx = Number(e.dataTransfer.getData("text/plain"));
+      const raw = e.dataTransfer.getData("application/x-tb-page");
+      if (raw === "") return;
+      const fromIdx = Number(raw);
       if (fromIdx === i) return;
       currentPage().layout = currentLayout();
       const [moved] = board.pages.splice(fromIdx, 1);
       board.pages.splice(i, 0, moved);
-      if      (currentPageIdx === fromIdx)                              currentPageIdx = i;
-      else if (fromIdx < currentPageIdx && i >= currentPageIdx)        currentPageIdx--;
-      else if (fromIdx > currentPageIdx && i <= currentPageIdx)        currentPageIdx++;
+      if      (currentPageIdx === fromIdx)                       currentPageIdx = i;
+      else if (fromIdx < currentPageIdx && i >= currentPageIdx) currentPageIdx--;
+      else if (fromIdx > currentPageIdx && i <= currentPageIdx) currentPageIdx++;
       renderBoard(); renderPageTabs(); saveLayoutSoon();
     });
 
     tab.addEventListener("click", () => { if (i !== currentPageIdx) switchPage(i); });
-    tab.append(nameSpan, renameBtn);
+    tab.append(miniMap(page.layout || [], COLS, ROWS), nameSpan);
 
     if (board.pages.length > 1) {
-      const del = document.createElement("button");
-      del.className = "page-tab-del"; del.title = "Remove page"; del.textContent = "✕";
-      del.addEventListener("click", (e) => {
+      const del = Object.assign(document.createElement("button"), { className: "page-tab-del", title: "Remove page", textContent: "✕" });
+      del.addEventListener("click", async (e) => {
         e.stopPropagation();
-        if (!confirm(`Remove page "${page.name}"? Cards on this page will be lost.`)) return;
+        if (!confirm(`Remove page "${page.name}"? Its cards are removed too (the widgets stay in the library).`)) return;
+        currentPage().layout = currentLayout();
         board.pages.splice(i, 1);
         if (currentPageIdx >= board.pages.length) currentPageIdx = board.pages.length - 1;
-        renderBoard(); renderPageTabs(); saveLayoutSoon();
+        else if (i < currentPageIdx) currentPageIdx--;
+        renderBoard(); renderPageTabs();
+        await saveNow();
+        // the page's stacks are no longer used anywhere — clean them up
+        try {
+          await fetch(`/api/board/cleanup?profile_id=${editingProfileId}`, { method: "POST" });
+          const fresh = await api.listStacks();
+          stacks = fresh;
+        } catch { /* best effort */ }
+        renderWidgets();
       });
       tab.appendChild(del);
     }
-
     bar.insertBefore(tab, addBtn);
-  }
+  });
 }
 
 function switchPage(idx) {
+  if (idx === currentPageIdx || !board.pages[idx]) return;
   currentPage().layout = currentLayout();
   currentPageIdx = idx;
+  selectStack(null);
   renderBoard();
   renderPageTabs();
+  inspector?.render(true);
+}
+
+async function addPage(name, layout = [], extra = {}) {
+  currentPage().layout = currentLayout();
+  const newId = Math.max(0, ...board.pages.map((p) => p.id)) + 1;
+  board.pages.push({ id: newId, name: name || `Page ${newId}`, layout, ...extra });
+  currentPageIdx = board.pages.length - 1;
+  renderBoard(); renderPageTabs();
+  await saveNow();
+  renderWidgets();
+  inspector?.render(true);
+  return board.pages[currentPageIdx];
 }
 
 // ── render board ──────────────────────────────────────────────────────────────
 
 function renderBoard() {
-  grid.removeAll();
+  grid.removeAll(true, false);
+  // removeAll can leave elements behind when called mid-update; clear them out
+  byId("gs-grid").querySelectorAll(":scope > .grid-stack-item:not(.grid-stack-placeholder)").forEach((e) => e.remove());
+  grid.batchUpdate();
   placedIds.clear();
-
-  const nodeByStack = Object.fromEntries(currentPage().layout.map((n) => [n.stack_id, n]));
+  const page = currentPage();
   const gsEl = byId("gs-grid");
-
-  for (const stack of stacks) {
-    const node = nodeByStack[stack.id];
-    if (!node) continue;
-    const savedType = node.item_type || (phantomStackIds.has(stack.id) ? "widget" : "stack");
-    const item = buildGridItem(stack, node, savedType);
+  for (const node of page.layout || []) {
+    const stack = stacks.find((s) => s.id === node.stack_id);
+    if (!stack) continue;
+    const item = buildGridItem(stack, node, node.item_type || "stack");
     gsEl.appendChild(item);
     grid.makeWidget(item);
     placedIds.add(stack.id);
+    phantomStackIds.add(stack.id);
   }
+  grid.batchUpdate(false);
+  const isTiled = page.mode === "tiled";
+  document.body.classList.toggle("page-tiled", isTiled);
+  grid.enableResize(!isTiled);
+  tiled?.show(isTiled);
+  if (selectedStackId != null && !placedIds.has(selectedStackId)) selectStack(null);
+  else for (const el of grid.getGridItems()) el.classList.toggle("is-selected", Number(el.dataset.stackId) === selectedStackId);
   syncPaletteStates();
+  updateStatus();
+  updateToolbar();
 }
 
 // ── settings modal ───────────────────────────────────────────────────────────
@@ -2185,6 +2818,30 @@ const INTEGRATION_GUIDES = {
       `Edit your user and scroll to the <strong>API Keys</strong> section. Click <strong>+</strong> to generate a key.`,
       `Download the key file and copy the <strong>Key</strong> and <strong>Secret</strong> into the fields above.`,
       `Base URL format: <code>https://&lt;opnsense-ip&gt;</code>`,
+    ],
+  },
+  plex: {
+    title: "Finding your Plex token",
+    steps: [
+      `Sign in to Plex Web, open any item, click <strong>⋯ → Get Info → View XML</strong>.`,
+      `The address bar now ends in <code>X-Plex-Token=…</code>. Copy the value after the <code>=</code>.`,
+      `Base URL format: <code>http://&lt;plex-server&gt;:32400</code>`,
+    ],
+  },
+  jellyfin: {
+    title: "Creating a Jellyfin API key",
+    steps: [
+      `In Jellyfin go to <strong>Dashboard → API Keys</strong> and click <strong>+</strong>.`,
+      `Name it <code>TouchBoard</code> and copy the key into the field above.`,
+      `Base URL format: <code>http://&lt;jellyfin-server&gt;:8096</code>`,
+    ],
+  },
+  rest: {
+    title: "Using a REST connection",
+    steps: [
+      `Set the base URL of the API, e.g. <code>http://homeassistant.lan:8123/api</code>.`,
+      `Put any secret headers in <strong>Headers</strong>, one per line: <code>Authorization: Bearer …</code>. They're encrypted on the server and never sent to the display.`,
+      `In a REST / JSON widget, pick this connection and use a path relative to the base URL.`,
     ],
   },
   google_calendar: {
@@ -2240,6 +2897,25 @@ const INTEGRATION_META = {
       { key: "api_secret", label: "API Secret", type: "password", placeholder: "API secret" },
     ],
     hint: "",
+  },
+  plex: {
+    label: "Plex", color: "#e5a00d", widgetType: "nowplaying", refresh: 10,
+    fields: [{ key: "token", label: "Plex token", type: "password", placeholder: "X-Plex-Token" }],
+    hint: "",
+  },
+  jellyfin: {
+    label: "Jellyfin", color: "#7b5cff", widgetType: "nowplaying", refresh: 10,
+    fields: [{ key: "api_key", label: "API key", type: "password", placeholder: "Dashboard → API Keys" }],
+    hint: "",
+  },
+  rest: {
+    label: "REST API", color: "#64748b", widgetType: "rest", optional: true, configureAfter: true, refresh: 30,
+    fields: [
+      { key: "headers", label: "Headers (one per line)", type: "textarea", placeholder: "Authorization: Bearer …\nX-Api-Key: …" },
+      { key: "username", label: "Basic auth user (optional)", placeholder: "" },
+      { key: "password", label: "Basic auth password", type: "password", placeholder: "" },
+    ],
+    hint: "Headers and passwords are encrypted on the server and never sent to the display.",
   },
   google_calendar: {
     label: "Google Calendar", color: "#4285f4",
@@ -3088,6 +3764,7 @@ async function openSettingsPanel(section) {
     try { presets = JSON.parse(currentCardSettings.card_presets || "[]"); } catch (_) {}
 
     const applyToPreview = () => {
+      st.theme_style = theme.style;
       applyCardStyle(st, previewScope);
       applyCardStyle(st, byId("preview-viewport"));
       applyTheme(theme, byId("preview-viewport"));
@@ -3188,6 +3865,34 @@ async function openSettingsPanel(section) {
         row.append(tog, Object.assign(document.createElement("span"), { className: "ds-row-label", textContent: labelText }));
         return { row, tog };
       }
+
+      // ── Display theme gallery (live thumbnails of the current page) ───────
+      const galSec = document.createElement("div");
+      galSec.className = "ds-section";
+      galSec.appendChild(Object.assign(document.createElement("div"), { className: "ds-section-label", textContent: "Display theme" }));
+      const gal = document.createElement("div");
+      gal.className = "ds-gallery";
+      for (const dt of DISPLAY_THEMES) {
+        const preset = THEME_PRESETS.find((p) => p.key === dt.preset) || {};
+        const active = theme.style === dt.style && st.card_bg_color === preset.card_bg_color && st.card_accent_color === preset.card_accent_color;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "ds-gallery-card" + (active ? " active" : "");
+        b.append(designerThumb(dt, preset), Object.assign(document.createElement("b"), { textContent: dt.label }),
+          Object.assign(document.createElement("small"), { textContent: dt.blurb }));
+        b.addEventListener("click", () => {
+          const { key, label, accent, ...cardFields } = preset;
+          Object.assign(st, cardFields, { board_bg_color: dt.board_bg_color });
+          theme.style = dt.style; theme.font = dt.font;
+          previewBoard.style.backgroundColor = dt.board_bg_color;
+          byId("preview-viewport").style.backgroundColor = dt.board_bg_color;
+          update();
+          buildControls();
+        });
+        gal.appendChild(b);
+      }
+      galSec.appendChild(gal);
+      controlsPane.appendChild(galSec);
 
       // ── Board Background section ──────────────────────────────────────────
       const boardSec = document.createElement("div");
@@ -3473,7 +4178,9 @@ async function openSettingsPanel(section) {
   dlg.showModal();
   _makeDraggable(dlg, head);
 
-  if (section === "Profiles") renderProfilesTab();
+  if (section === "Editor") { titleEl.textContent = "Editor theme & modes"; renderEditorPrefs(contentEl); }
+  else if (section === "Notifications") { titleEl.textContent = "Alerts & notifications"; renderNotificationsTab(contentEl); }
+  else if (section === "Profiles") renderProfilesTab();
   else if (section === "Ping Targets") renderPingTargetsTab();
   else if (section === "Users") renderUsersTab();
   else if (section === "Integrations") renderIntegrationsTab();
@@ -3839,7 +4546,7 @@ function showOnboarding(settings) {
         ["Widgets", "Data sources: ping monitors, clocks, stat counters, and more"],
         ["Integrations", "Connect external data sources to power your widgets"],
         ["Stacks", "Group widgets together; scroll in the editor or tap/click on the display to cycle between them"],
-        ["Layout", "Drag stacks onto the canvas to arrange your dashboard"],
+        ["Layout", "Drag widgets onto the board, or draw a card on the grid and pick what goes in it"],
         ["Designer", "Customize card appearance with themes, gradients, and glow effects"],
         ["Display", "Open /display on any screen to show your board fullscreen"],
       ];
@@ -4049,20 +4756,451 @@ async function renderProfileMenu(profiles) {
   menu.appendChild(manageBtn);
 }
 
-async function init() {
-  // Auth check — redirect to login if not authenticated
-  let currentUser;
-  try {
-    currentUser = await api.me();
-  } catch {
-    window.location.href = "/login";
-    return;
+// Mini render of the current page in a given display theme (Designer gallery).
+function designerThumb(dt, preset) {
+  const W = 220, H = Math.round(W * dispH / dispW);
+  const box = document.createElement("div");
+  box.className = "ds-thumb";
+  box.style.width = W + "px"; box.style.height = H + "px";
+  const b = document.createElement("div");
+  b.className = "ds-thumb-board";
+  b.id = `ds-thumb-${dt.key}`;
+  b.dataset.style = dt.style; b.dataset.font = dt.font;
+  Object.assign(b.style, { width: dispW + "px", height: dispH + "px", transform: `scale(${W / dispW})`, backgroundColor: dt.board_bg_color,
+    gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${ROWS}, minmax(0, 1fr))` });
+  const layout = grid ? currentLayout() : (currentPage().layout || []);
+  for (const n of layout) {
+    const stack = stacks.find((s) => s.id === n.stack_id);
+    const w = stack && currentWidgetOf(stack);
+    const cell = document.createElement("div");
+    cell.className = "stack-cell";
+    cell.style.gridColumn = `${n.x + 1} / span ${n.w}`;
+    cell.style.gridRow = `${n.y + 1} / span ${n.h}`;
+    if (w) {
+      const body = Object.assign(document.createElement("div"), { className: "display-widget-body" });
+      body.appendChild(renderWidget(w, liveData[w.id] || null));
+      cell.appendChild(body);
+    }
+    b.appendChild(cell);
   }
+  const { key, label, accent, ...cardFields } = preset;
+  requestAnimationFrame(() => applyCardStyle({ ...cardFields, theme_style: dt.style }, b));
+  box.appendChild(b);
+  return box;
+}
+
+// ── screen presets ───────────────────────────────────────────────────────────
+
+const SCREEN_PRESETS = [
+  [800, 480, "Raspberry Pi 7\" Touch"],
+  [1024, 600, "7\" panel"],
+  [1280, 400, "Bar display"],
+  [1280, 800, "10\" tablet"],
+  [1920, 480, "Ultrawide bar"],
+  [1920, 720, "Bar display"],
+  [1920, 1080, "Full HD"],
+  [2560, 1440, "QHD"],
+  [2360, 1640, "iPad Air"],
+  [2732, 2048, "iPad Pro 12.9\""],
+];
+
+function fillScreenPresets() {
+  const sel = byId("screen-preset");
+  sel.innerHTML = "";
+  const all = [];
+  for (const [w, h, name] of SCREEN_PRESETS) {
+    all.push([`${w}x${h}`, `${w} × ${h} · ${name}`]);
+    if (w !== h) all.push([`${h}x${w}`, `${h} × ${w} · ${name} (portrait)`]);
+  }
+  const key = `${dispW}x${dispH}`;
+  const known = all.some(([k]) => k === key);
+  for (const [k, label] of all) sel.appendChild(Object.assign(document.createElement("option"), { value: k, textContent: label }));
+  sel.appendChild(Object.assign(document.createElement("option"), { value: "custom", textContent: known ? "Custom size…" : `${dispW} × ${dispH} · Custom` }));
+  sel.value = known ? key : "custom";
+  byId("custom-res").classList.toggle("hidden", known);
+  byId("res-w").value = dispW;
+  byId("res-h").value = dispH;
+}
+
+function setScreen(w, h) {
+  dispW = Math.max(320, Math.min(7680, Math.round(w) || 1920));
+  dispH = Math.max(240, Math.min(4320, Math.round(h) || 720));
+  api.updateProfileBoard(editingProfileId, { disp_w: dispW, disp_h: dispH }).catch(() => {});
+  fillScreenPresets();
+  updatePreviewSize();
+}
+
+// ── grid density ─────────────────────────────────────────────────────────────
+
+async function setDensity(value) {
+  const [c, r] = value.split("x").map(Number);
+  if (!c || !r || (c === COLS && r === ROWS)) return;
+  if (!confirm(`Change the grid to ${c} × ${r}? Every page is rescaled to match.`)) { inspector?.render(true); return; }
+  currentPage().layout = currentLayout();
+  for (const p of board.pages) p.layout = G.rescale(p.layout || [], COLS, ROWS, c, r, 1, 1);
+  await api.updateBoard({ columns: c, rows: r, pages: board.pages });
+  window.location.reload();
+}
+
+// ── page mode ────────────────────────────────────────────────────────────────
+
+function setPageMode(mode) {
+  const page = currentPage();
+  page.mode = mode === "tiled" ? "tiled" : "free";
+  if (page.mode === "tiled") {
+    // grow every card into empty space so the page is tiled
+    const nodes = pageNodes();
+    const plain = nodes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h }));
+    const tiledNodes = G.tileAll(plain, COLS, ROWS);
+    grid.batchUpdate();
+    nodes.forEach((n, i) => grid.update(n.el, tiledNodes[i]));
+    grid.batchUpdate(false);
+  }
+  page.layout = currentLayout();
+  renderBoard(); renderPageTabs();
+  saveLayoutSoon();
+  inspector?.render(true);
+}
+
+// ── editor settings panels ───────────────────────────────────────────────────
+
+function renderEditorPrefs(contentEl) {
+  contentEl.innerHTML = "";
+  const p = getPrefs();
+  const intro = Object.assign(document.createElement("p"), { className: "settings-ds-hint", textContent: "These are saved on this device, so a tablet and a desktop can each have their own." });
+  const head = Object.assign(document.createElement("div"), { className: "settings-section-head", textContent: "Editor theme" });
+  const grid2 = Object.assign(document.createElement("div"), { className: "ed-theme-cards" });
+  for (const t of APP_THEMES) {
+    const b = Object.assign(document.createElement("button"), { type: "button", className: `ed-theme-card t-${t.key}` + (p.theme === t.key ? " active" : "") });
+    b.innerHTML = `<span class="ed-theme-swatch"><i></i><i></i><i></i></span><b></b><small></small>`;
+    b.querySelector("b").textContent = t.label;
+    b.querySelector("small").textContent = t.blurb;
+    b.addEventListener("click", () => {
+      setPref("theme", t.key);
+      prefs = getPrefs();
+      renderEditorPrefs(contentEl);
+      requestAnimationFrame(updatePreviewSize);
+    });
+    grid2.appendChild(b);
+  }
+  const modes = Object.assign(document.createElement("div"), { className: "settings-section-head", textContent: "Editing" });
+  const mkToggle = (label, hint, key) => {
+    const row = Object.assign(document.createElement("label"), { className: "ed-pref-row" });
+    const input = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!p[key] });
+    input.addEventListener("change", () => { setPref(key, input.checked); prefs = getPrefs(); applyPrefs(); });
+    const text = document.createElement("span");
+    text.append(Object.assign(document.createElement("b"), { textContent: label }), Object.assign(document.createElement("small"), { textContent: hint }));
+    row.append(input, text);
+    return row;
+  };
+  const note = Object.assign(document.createElement("p"), { className: "settings-ds-hint", textContent: "Tiled pages are set per page in the inspector (select nothing, then Page → Layout). Editing on the display is set per screen in the same place." });
+  contentEl.append(intro, head, grid2, modes,
+    mkToggle("Inspector panel", "Card and page settings in a panel on the right. Off: settings open from ✎ on each card.", "inspector"),
+    mkToggle("Draw to place", "Drag across empty grid to draw a card, then choose what goes in it.", "drawToPlace"),
+    note);
+}
+
+function renderNotificationsTab(contentEl) {
+  contentEl.innerHTML = "";
+  const s = currentCardSettings;
+  const intro = Object.assign(document.createElement("p"), { className: "settings-ds-hint",
+    textContent: "Set thresholds per widget in the inspector (select a card → Alerts). When one fires, TouchBoard can send a push notification." });
+  const mk = (label, input) => makeSbRow(label, input);
+  const ntfy = Object.assign(document.createElement("input"), { className: "sb-form-input", placeholder: "https://ntfy.sh/your-topic", value: s.notify_ntfy_url || "" });
+  const hook = Object.assign(document.createElement("input"), { className: "sb-form-input", placeholder: "https://example.com/webhook (receives JSON)", value: s.notify_webhook_url || "" });
+  const level = document.createElement("select");
+  level.className = "sb-form-input";
+  for (const [v, l] of [["crit", "Critical only"], ["warn", "Warnings and critical"]]) level.appendChild(Object.assign(document.createElement("option"), { value: v, textContent: l }));
+  level.value = s.notify_min_level || "crit";
+  const cool = Object.assign(document.createElement("input"), { className: "sb-form-input", type: "number", min: "0", value: s.notify_cooldown_min || "15" });
+  const status = Object.assign(document.createElement("div"), { className: "settings-ds-hint" });
+  const save = Object.assign(document.createElement("button"), { type: "button", className: "small primary", textContent: "Save" });
+  const test = Object.assign(document.createElement("button"), { type: "button", className: "small", textContent: "Send a test" });
+  save.addEventListener("click", async () => {
+    const body = { notify_ntfy_url: ntfy.value.trim(), notify_webhook_url: hook.value.trim(), notify_min_level: level.value, notify_cooldown_min: String(Math.max(0, Number(cool.value) || 0)) };
+    try { const r = await api.updateSettings(body); Object.assign(currentCardSettings, r); status.textContent = "Saved."; }
+    catch { status.textContent = "Couldn't save. Check the URLs."; }
+  });
+  test.addEventListener("click", async () => {
+    status.textContent = "Sending…";
+    try {
+      const r = await fetch("/api/notify/test", { method: "POST" });
+      status.textContent = r.ok ? "Sent. Check your phone or endpoint." : (await r.json().catch(() => ({}))).detail || "Couldn't send.";
+    } catch { status.textContent = "Couldn't send."; }
+  });
+  const footer = Object.assign(document.createElement("div"), { className: "settings-form-footer" });
+  footer.append(test, save);
+  contentEl.append(intro, mk("ntfy topic URL", ntfy), mk("Webhook URL", hook), mk("Notify on", level), mk("Repeat at most every (minutes)", cool), footer, status);
+}
+
+// ── starter layouts dialog ───────────────────────────────────────────────────
+
+function openTemplates() {
+  const dlg = byId("widget-modal");
+  dlg.innerHTML = "";
+  const head = Object.assign(document.createElement("div"), { className: "modal-head" });
+  const close = Object.assign(document.createElement("button"), { className: "modal-close-btn", textContent: "✕" });
+  close.addEventListener("click", () => dlg.close());
+  head.append(Object.assign(document.createElement("h2"), { textContent: "Starter layouts" }), close);
+  const body = Object.assign(document.createElement("div"), { className: "modal-body" });
+  body.appendChild(Object.assign(document.createElement("p"), { className: "wizard-step-hint", textContent: "Each one becomes a new page. It uses your widgets where it can, and adds a clock, notes or bookmarks where you don't have one." }));
+  const gridEl = Object.assign(document.createElement("div"), { className: "ed-tpl-grid" });
+  for (const tpl of TEMPLATES) {
+    const b = Object.assign(document.createElement("button"), { type: "button", className: "ed-tpl" });
+    b.append(miniMap(tpl.slots, 24, 16, "ed-tpl-map"),
+      Object.assign(document.createElement("b"), { textContent: tpl.name }),
+      Object.assign(document.createElement("small"), { textContent: tpl.blurb }));
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        await applyTemplate(tpl, templateCtx());
+        dlg.close();
+        toast(`Added the ${tpl.name} page`);
+      } catch (e) { toast("Couldn't apply that layout."); b.disabled = false; }
+    });
+    gridEl.appendChild(b);
+  }
+  body.appendChild(gridEl);
+  dlg.append(head, body);
+  dlg.showModal();
+}
+
+function templateCtx() {
+  return {
+    get widgets() { return widgets; },
+    placedWidgetIds,
+    cols: COLS, rows: ROWS,
+    dataSources,
+    createWidget: async (b) => { const w = await api.createWidget(b); widgets.push(w); reindex(); renderWidgets(); return w; },
+    createStack: async (b) => { const s = await api.createStack(b); stacks.push(s); return s; },
+    addPage,
+  };
+}
+
+function doExportPage() {
+  currentPage().layout = currentLayout();
+  exportPage(currentPage(), { stacks, widgetsById, dataSources, cols: COLS, rows: ROWS });
+}
+function doImportPage() {
+  const input = byId("import-file");
+  input.value = "";
+  input.click();
+}
+async function onImportFile(e) {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  try {
+    dataSources = await api.listDataSources().catch(() => dataSources);
+    const page = await importPage(f, templateCtx());
+    toast(`Imported "${page.name}"`);
+  } catch (err) { toast(err.message || "Couldn't import that file."); }
+  e.target.value = "";
+}
+
+// ── command palette ──────────────────────────────────────────────────────────
+
+function buildCommands() {
+  const cmds = [];
+  const sel = stacks.find((s) => s.id === selectedStackId);
+  const add = (group, title, run, extra = {}) => cmds.push({ group, title, run, ...extra });
+  if (sel) {
+    add("Selected card", `Edit ${sel.name}`, () => { const w = currentWidgetOf(sel); if (w) openWidgetModal(w); }, { order: 1 });
+    add("Selected card", "Duplicate card", () => duplicateCard(sel.id), { hint: "Ctrl D", order: 2 });
+    add("Selected card", "Fill empty space", () => fillCard(sel.id), { hint: "F", order: 3 });
+    add("Selected card", gridItemFor(sel.id)?.gridstackNode?.locked ? "Unlock card" : "Lock card", () => setLocked(sel.id, !gridItemFor(sel.id)?.gridstackNode?.locked), { hint: "L", order: 4 });
+    add("Selected card", "Remove card", () => removeCard(sel.id), { hint: "Del", order: 5 });
+    board.pages.forEach((p, i) => { if (i !== currentPageIdx) add("Selected card", `Move card to ${p.name}`, () => moveCardToPage(sel.id, i), { order: 6 }); });
+    for (const w of stackableWidgets(sel)) add("Selected card", `Stack ${w.title} onto this card`, () => mergeWidgetIntoStack(sel, w.id), { order: 7 });
+  }
+  for (const w of widgets) add("Add to page", `Add ${w.title}`, () => placeWidget(w.id), { hint: w.type, keywords: w.type, order: 10 });
+  for (const t of WIDGET_TYPES) add("New widget", `New ${t.label} widget…`, () => createThenPlace(t.type, null), { keywords: t.type, order: 20 });
+  board.pages.forEach((p, i) => add("Pages", `Go to ${p.name}`, () => switchPage(i), { order: 30 }));
+  add("Pages", "New page", () => addPage(), { order: 31 });
+  add("Pages", "Starter layouts…", openTemplates, { order: 32 });
+  add("Pages", currentPage().mode === "tiled" ? "Make this page a free grid" : "Make this page tiled", () => setPageMode(currentPage().mode === "tiled" ? "free" : "tiled"), { order: 33 });
+  add("Pages", "Export this page", doExportPage, { order: 34 });
+  add("Pages", "Import a page…", doImportPage, { order: 35 });
+  add("Edit", "Undo", () => history.undo(), { hint: "Ctrl Z", order: 40 });
+  add("Edit", "Redo", () => history.redo(), { hint: "Ctrl ⇧ Z", order: 41 });
+  for (const t of APP_THEMES) add("Editor theme", `Editor theme: ${t.label}`, () => { setPref("theme", t.key); prefs = getPrefs(); requestAnimationFrame(updatePreviewSize); }, { order: 50 });
+  for (const dt of DISPLAY_THEMES) add("Display theme", `Display theme: ${dt.label}`, () => applyDisplayTheme(dt), { order: 55 });
+  add("Settings", prefs.drawToPlace ? "Turn off draw to place" : "Turn on draw to place", () => { setPref("drawToPlace", !prefs.drawToPlace); prefs = getPrefs(); applyPrefs(); }, { order: 60 });
+  add("Settings", prefs.inspector ? "Hide the inspector panel" : "Show the inspector panel", () => { setPref("inspector", !prefs.inspector); prefs = getPrefs(); applyPrefs(); }, { order: 61 });
+  for (const s of ["Designer", "Integrations", "Ping Targets", "Notifications", "Profiles", "Users", "Backup", "Editor"]) add("Settings", `Open ${s === "Editor" ? "editor preferences" : s}`, () => openSettingsPanel(s), { order: 62 });
+  add("Display", "Open the display", () => window.open(byId("open-display-link").href, "_blank"), { order: 70 });
+  return cmds;
+}
+
+async function applyDisplayTheme(dt) {
+  const preset = THEME_PRESETS.find((p) => p.key === dt.preset) || {};
+  const { key, label, accent, ...cardFields } = preset;
+  const patch = { ...cardFields, theme_style: dt.style, theme_font: dt.font, board_bg_color: dt.board_bg_color };
+  const body = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, String(v)]));
+  const saved = await api.updateSettings(body);
+  Object.assign(currentCardSettings, saved);
+  currentTheme.style = dt.style; currentTheme.font = dt.font;
+  applyBoardTheme();
+  toast(`Display theme: ${dt.label}`);
+}
+
+function applyBoardTheme() {
+  const vp = byId("preview-viewport");
+  applyTheme(currentTheme, vp);
+  applyCardStyle({ ...currentCardSettings, theme_style: currentTheme.style }, vp);
+  vp.style.setProperty("--widget-font-scale", currentCardSettings.widget_font_scale || "1");
+  vp.style.backgroundColor = currentCardSettings.board_bg_color || "";
+}
+
+function applyPrefs() {
+  document.body.classList.toggle("has-inspector", !!prefs.inspector);
+  document.body.classList.toggle("no-draw", !prefs.drawToPlace);
+  requestAnimationFrame(updatePreviewSize);
+}
+
+// ── keyboard ─────────────────────────────────────────────────────────────────
+
+function setupKeyboard() {
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    const typing = t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(buildCommands); return; }
+    if (document.querySelector("dialog[open]") || isPaletteOpen()) return;
+    if (typing) return;
+    if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? history.redo() : history.undo(); return; }
+    if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); history.redo(); return; }
+    if (e.key === "[") { switchPage(Math.max(0, currentPageIdx - 1)); return; }
+    if (e.key === "]") { switchPage(Math.min(board.pages.length - 1, currentPageIdx + 1)); return; }
+    if (e.key === "/" ) { e.preventDefault(); byId("lib-search")?.focus(); return; }
+    const sel = selectedStackId;
+    if (sel == null) return;
+    if (e.key === "Escape") { selectStack(null); return; }
+    if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); duplicateCard(sel); return; }
+    if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); removeCard(sel); return; }
+    if (e.key.toLowerCase() === "l" && !mod) { setLocked(sel, !gridItemFor(sel)?.gridstackNode?.locked); return; }
+    if (e.key.toLowerCase() === "f" && !mod) { fillCard(sel); return; }
+    if (e.key === "Enter") { const s = stacks.find((x) => x.id === sel); const w = s && currentWidgetOf(s); if (w) openWidgetModal(w); return; }
+    const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    if (arrows[e.key]) {
+      e.preventDefault();
+      const el = gridItemFor(sel);
+      const n = el?.gridstackNode;
+      if (!n || n.locked) return;
+      const [dx, dy] = arrows[e.key];
+      updateNode(sel, e.shiftKey ? { w: n.w + dx, h: n.h + dy } : { x: n.x + dx, y: n.y + dy });
+      updateToolbar(); updateStatus();
+    }
+  });
+}
+
+// ── undo / redo state ────────────────────────────────────────────────────────
+
+function snapshot() {
+  const pages = structuredClone(board.pages);
+  if (grid) pages[currentPageIdx].layout = currentLayout();
+  return { pages, stacks: stacks.map((s) => ({ id: s.id, name: s.name, widget_ids: [...s.widget_ids], cycle_mode: s.cycle_mode })) };
+}
+
+async function applySnapshot(snap) {
+  clearTimeout(saveTimer);
+  const idMap = {};
+  const wanted = new Map(snap.stacks.map((s) => [s.id, s]));
+  for (const s of [...stacks]) {
+    if (!wanted.has(s.id)) { await api.deleteStack(s.id).catch(() => {}); stacks = stacks.filter((x) => x !== s); }
+  }
+  for (const ws of snap.stacks) {
+    const ids = ws.widget_ids.filter((id) => widgetsById[id]);
+    const cur = stacks.find((s) => s.id === ws.id);
+    if (cur) {
+      if (cur.name !== ws.name || JSON.stringify(cur.widget_ids) !== JSON.stringify(ids) || cur.cycle_mode !== ws.cycle_mode) {
+        Object.assign(cur, await api.updateStack(cur.id, { name: ws.name, widget_ids: ids, cycle_mode: ws.cycle_mode }));
+      }
+    } else {
+      const c = await api.createStack({ name: ws.name, widget_ids: ids, cycle_mode: ws.cycle_mode });
+      stacks.push(c);
+      idMap[ws.id] = c.id;
+    }
+  }
+  board.pages = structuredClone(snap.pages);
+  for (const p of board.pages) for (const n of p.layout || []) if (idMap[n.stack_id] != null) n.stack_id = idMap[n.stack_id];
+  if (currentPageIdx >= board.pages.length) currentPageIdx = board.pages.length - 1;
+  await api.updateBoard({ columns: COLS, rows: ROWS, pages: board.pages });
+  renderBoard(); renderPageTabs(); renderWidgets();
+  inspector?.render(true);
+  return idMap;
+}
+
+function updateHistoryButtons() {
+  if (!history) return;
+  byId("undo-btn").disabled = !history.canUndo;
+  byId("redo-btn").disabled = !history.canRedo;
+}
+
+// ── inspector context ────────────────────────────────────────────────────────
+
+function inspectorCtx() {
+  return {
+    selectedStack: () => stacks.find((s) => s.id === selectedStackId) || null,
+    currentWidget: (stack) => currentWidgetOf(stack),
+    widgetsById: () => widgetsById,
+    nodeOf: (id) => gridItemFor(id)?.gridstackNode,
+    cellPx,
+    envelope: (wid) => liveData[wid],
+    currentPage, currentPageIdx: () => currentPageIdx,
+    pageCount: () => board.pages.length,
+    pageNames: () => board.pages.map((p) => p.name),
+    options: () => board.options || {},
+    cols: () => COLS, rows: () => ROWS,
+    displayUrl: () => `/display?profile=${encodeURIComponent(editingProfileName || String(editingProfileId))}`,
+    updateNode, setLocked: (id, v) => setLocked(id, v),
+    fill: (id) => fillCard(id), duplicate: (id) => duplicateCard(id), remove: (id) => removeCard(id),
+    moveToPage: (id, idx) => moveCardToPage(id, idx),
+    showWidget: (id, i) => { cardWidgetIdx[id] = i; const s = stacks.find((x) => x.id === id); if (s) refreshPlacedCard(s); inspector.render(true); },
+    stackableWidgets,
+    addToStack: (stack, wid) => mergeWidgetIntoStack(stack, wid),
+    removeFromStack: async (stack, wid) => {
+      const u = await api.updateStack(stack.id, { widget_ids: stack.widget_ids.filter((x) => x !== wid) });
+      stack.widget_ids = u.widget_ids; refreshPlacedCard(stack); saveLayoutSoon(); inspector.render(true);
+    },
+    reorder: async (stack, i, dir) => {
+      const j = i + dir;
+      if (j < 0 || j >= stack.widget_ids.length) return;
+      const ids = [...stack.widget_ids]; [ids[i], ids[j]] = [ids[j], ids[i]];
+      const u = await api.updateStack(stack.id, { widget_ids: ids });
+      stack.widget_ids = u.widget_ids; cardWidgetIdx[stack.id] = j; refreshPlacedCard(stack); saveLayoutSoon(); inspector.render(true);
+    },
+    updateStack: async (stack, patch) => {
+      Object.assign(stack, await api.updateStack(stack.id, patch));
+      refreshPlacedCard(stack); saveLayoutSoon(); inspector.render(true);
+    },
+    editWidget: (w) => openWidgetModal(w),
+    openColors: (anchor, w, stack) => openWidgetAppearancePopover(anchor, w, liveData[w.id]?.data, () => openStackModal(stack)),
+    previewScale: (id, v) => gridItemFor(id)?.querySelector(".widget")?.style.setProperty("--w-scale", String(v)),
+    updateWidgetConfig: async (w, patch) => {
+      const updated = await api.updateWidget(w.id, { config: { ...(w.config || {}), ...patch } });
+      Object.assign(w, updated); reindex(); rerenderCardsFor(w.id);
+    },
+    updateWidget: async (w, patch) => {
+      const updated = await api.updateWidget(w.id, patch);
+      Object.assign(w, updated); reindex(); rerenderCardsFor(w.id);
+    },
+    setPageProp: (k, v) => { currentPage()[k] = v; renderPageTabs(); saveLayoutSoon(); },
+    setPageMode,
+    setOption: (k, v) => { board.options = { ...(board.options || {}), [k]: v }; saveOptionsSoon(); },
+    setDensity,
+    openTemplates, exportPage: doExportPage, importPage: doImportPage,
+  };
+}
+
+// ── boot ─────────────────────────────────────────────────────────────────────
+
+async function init() {
+  let currentUser;
+  try { currentUser = await api.me(); } catch { window.location.href = "/login"; return; }
   if (!currentUser) { window.location.href = "/login"; return; }
 
   const userEl = byId("topbar-user");
   if (userEl) userEl.textContent = currentUser.username;
-
   byId("logout-btn").addEventListener("click", async () => {
     await api.logout().catch(() => {});
     window.location.href = "/login";
@@ -4071,44 +5209,29 @@ async function init() {
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
 
-  // Which profile to edit: whatever was last selected (persisted across the
-  // reload triggered by switching in the dropdown), else the active profile.
   const profiles = await api.listProfiles();
   const storedId = Number(sessionStorage.getItem("tb_editing_profile_id"));
-  editingProfileId = profiles.some((p) => p.id === storedId)
-    ? storedId
-    : (profiles.find((p) => p.is_active) ?? profiles[0])?.id;
+  editingProfileId = profiles.some((p) => p.id === storedId) ? storedId : (profiles.find((p) => p.is_active) ?? profiles[0])?.id;
+  editingProfileName = profiles.find((p) => p.id === editingProfileId)?.name || "";
   api.setEditingProfile(editingProfileId);
   renderProfileMenu(profiles);
 
   const full = await api.boardFull();
-  board   = full.board;
-  // Normalize: backend always returns pages now, but guard for safety
-  if (!board.pages || !board.pages.length) {
-    board.pages = [{ id: 1, name: "Page 1", layout: board.layout || [] }];
-  }
+  board = full.board;
+  if (!board.pages || !board.pages.length) board.pages = [{ id: 1, name: "Page 1", layout: board.layout || [] }];
+  board.options = board.options || {};
   stacks  = full.stacks;
   widgets = full.widgets;
   reindex();
+  api.listDataSources().then((d) => { dataSources = d; }).catch(() => {});
 
   await loadPingTargets();
   fetchLiveData().then(() => { renderWidgets(); refreshGridCards(); });
 
   const settings = await api.getSettings();
-
-  // Apply contextual tips state
   initTooltips();
-  const tipsActive = settings.tips_enabled !== "false";
-  setTipsEnabled(tipsActive, false);
-
-  // Wire up the Contextual Tips item in the Settings dropdown
-  const tipsMenuItem = byId("tips-menu-item");
-  if (tipsMenuItem) {
-    tipsMenuItem.addEventListener("click", () => {
-      setTipsEnabled(!document.body.classList.contains("tips-on"));
-    });
-  }
-
+  setTipsEnabled(settings.tips_enabled !== "false", false);
+  byId("tips-menu-item")?.addEventListener("click", () => setTipsEnabled(!document.body.classList.contains("tips-on")));
   if (settings.onboarding_done !== "true" || currentUser.is_default_password) {
     showOnboarding({ ...settings, is_default_password: currentUser.is_default_password });
   }
@@ -4116,281 +5239,229 @@ async function init() {
   currentTheme.style = settings.theme_style || "classic";
   currentTheme.font  = settings.theme_font  || "inter";
   Object.assign(currentCardSettings, settings);
-  applyTheme(currentTheme, byId("preview-viewport"));
-  applyCardStyle(currentCardSettings, byId("preview-viewport"));
-  byId("preview-viewport").style.setProperty("--widget-font-scale", settings.widget_font_scale || "1");
-  if (settings.board_bg_color) { const _vp = byId("preview-viewport"); if (_vp) _vp.style.backgroundColor = settings.board_bg_color; }
+  applyBoardTheme();
   dispW = board.disp_w || 1920;
   dispH = board.disp_h || 720;
-  byId("res-w").value = dispW;
-  byId("res-h").value = dispH;
+  fillScreenPresets();
 
-  // Migrate layouts stored with old column counts to the fixed COLS×ROWS grid
-  if (board.columns !== COLS) {
-    const colScale = COLS / (board.columns || 6);
-    const rowScale = ROWS / 12; // old MAX_ROWS was 12
-    for (const page of board.pages) {
-      for (const node of page.layout || []) {
-        node.x = Math.round(node.x * colScale);
-        node.w = Math.max(MIN_W, Math.round(node.w * colScale));
-        node.y = Math.round(node.y * rowScale);
-        node.h = Math.max(MIN_H, Math.round(node.h * rowScale));
-      }
+  // Migrate layouts stored with old column counts (pre-24-column boards)
+  if (board.columns && board.columns < 12) {
+    const colScale = 24 / board.columns, rowScale = 16 / 12;
+    for (const page of board.pages) for (const node of page.layout || []) {
+      node.x = Math.round(node.x * colScale); node.w = Math.max(MIN_W, Math.round(node.w * colScale));
+      node.y = Math.round(node.y * rowScale); node.h = Math.max(MIN_H, Math.round(node.h * rowScale));
     }
-    board.columns = COLS;
-    api.updateBoard({ columns: COLS, pages: board.pages });
+    board.columns = 24;
+    api.updateBoard({ columns: 24, rows: 16, pages: board.pages });
   }
-
-  const { w: initW, h: initH } = calcPreview();
-  const vp = byId("preview-viewport");
-  vp.style.width  = initW + "px";
-  vp.style.height = initH + "px";
+  COLS = board.columns || 24;
+  ROWS = board.rows || 16;
 
   const gsEl = byId("gs-grid");
-  grid = GridStack.init(
-    {
-      column: COLS,
-      cellHeight: Math.round(initH / ROWS),
-      maxRow: ROWS,
-      margin: 4,
-      float: true,
-      minW: MIN_W,
-      minH: MIN_H,
-      handle: ".layout-drag-handle",
-      resizable: { handles: "e,w,s,se,sw,n,ne,nw" },
-    },
-    gsEl
-  );
+  updatePreviewSize();
+  grid = GridStack.init({
+    column: COLS,
+    cellHeight: dispH / ROWS,
+    maxRow: ROWS,
+    margin: 0,
+    float: true,
+    minW: MIN_W,
+    minH: MIN_H,
+    handle: ".layout-stack-card",
+    draggable: { cancel: ".lc-pag-dot, .layout-card-actions, .layout-card-btn, button, input, select, textarea" },
+    resizable: { handles: "e,w,s,se,sw,n,ne,nw" },
+    alwaysShowResizeHandle: "mobile",
+    acceptWidgets: ".sb-widget-item",
+    animate: true,
+  }, gsEl);
+  gsEl.classList.add(`gs-${COLS}`);
 
-  grid.on("change", () => saveLayoutSoon());
+  // ── grid events ──
+  grid.on("change", () => { saveLayoutSoon(); updateToolbar(); updateStatus(); tiled?.render(); });
 
+  grid.on("resizestart", (_e, el) => { document.body.classList.add("is-dragging"); updateToolbar(); showSizeReadout(el); });
+  grid.on("resize", (_e, el) => showSizeReadout(el));
   grid.on("resizestop", (_ev, el) => {
+    document.body.classList.remove("is-dragging");
     const n = el.gridstackNode;
-    if (!n) return;
-    let { x, y, w, h } = n;
-    let snapped = false;
-    if (y <= 1)              { h += y; y = 0;          snapped = true; }
-    if (y + h >= ROWS - 1)  { h = ROWS - y;            snapped = true; }
-    if (snapped) grid.update(el, { x, y, w, h });
+    if (n) {
+      // snap to the board edges when released within one cell of them
+      let { x, y, w, h } = n, snapped = false;
+      if (y > 0 && y <= 1) { h += y; y = 0; snapped = true; }
+      if (x > 0 && x <= 1) { w += x; x = 0; snapped = true; }
+      if (y + h < ROWS && y + h >= ROWS - 1) { h = ROWS - y; snapped = true; }
+      if (x + w < COLS && x + w >= COLS - 1) { w = COLS - x; snapped = true; }
+      if (snapped && G.isFree({ x, y, w, h }, pageNodes().filter((o) => o.el !== el), COLS, ROWS)) grid.update(el, { x, y, w, h });
+    }
+    selectStack(Number(el.dataset.stackId));
+    updateToolbar();
   });
 
-  let lastMouseX = 0, lastMouseY = 0;
-  let isDraggingGridItem = false, currentDraggedEl = null, mergeCandidateEl = null;
-
-  document.addEventListener("mousemove", (e) => {
-    lastMouseX = e.clientX; lastMouseY = e.clientY;
-    if (!isDraggingGridItem || !currentDraggedEl) return;
-
-    const draggedStackId = Number(currentDraggedEl.dataset.stackId);
-    const draggedStack   = stacks.find(s => s.id === draggedStackId);
-    const draggedHasIntegration = draggedStack?.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
-
-    let found = null;
-    for (const item of grid.getGridItems()) {
-      if (item === currentDraggedEl) continue;
-      const r = item.getBoundingClientRect();
-      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-        found = item; break;
-      }
-    }
-
-    for (const item of grid.getGridItems()) {
-      if (item === currentDraggedEl) continue;
-      const card = item.querySelector(".layout-stack-card");
-      if (!card) continue;
-      const targetStack = stacks.find(s => s.id === Number(item.dataset.stackId));
-      const targetHasIntegration = targetStack?.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
-      card.classList.toggle("merge-target", item === found && !draggedHasIntegration && !targetHasIntegration);
-    }
-    mergeCandidateEl = found;
-  });
-  document.addEventListener("mouseup",   (e) => { lastMouseX = e.clientX; lastMouseY = e.clientY; });
-
-  const sidebar = document.querySelector(".stack-palette");
-
+  const library = byId("library");
   grid.on("dragstart", (_ev, el) => {
-    isDraggingGridItem = true;
-    currentDraggedEl   = el;
-    mergeCandidateEl   = null;
-    sidebar.classList.add("drag-receiving");
+    draggingEl = el;
+    document.body.classList.add("is-dragging");
+    library.classList.add("drag-receiving");
+    byId("palette-drop-zone").classList.add("active");
     el.dataset.dragStartCol = el.gridstackNode?.x ?? -1;
     el.dataset.dragStartRow = el.gridstackNode?.y ?? -1;
-    byId("palette-drop-zone").classList.add("active");
+    selectStack(Number(el.dataset.stackId));
+    updateToolbar();
   });
+  grid.on("drag", (_e, el) => showSizeReadout(el));
 
   grid.on("dragstop", async (_ev, el) => {
-    isDraggingGridItem = false;
-    currentDraggedEl   = null;
-    const candidate    = mergeCandidateEl;
-    mergeCandidateEl   = null;
-
-    // Clear any merge highlights
-    for (const item of grid.getGridItems()) {
-      item.querySelector(".layout-stack-card")?.classList.remove("merge-target");
-    }
-
-    sidebar.classList.remove("drag-receiving");
+    const armed = dwell.armed ? dwell.el : null;
+    clearDwell();
+    draggingEl = null;
+    document.body.classList.remove("is-dragging");
+    library.classList.remove("drag-receiving");
     byId("palette-drop-zone").classList.remove("active");
-    const sidebarRect = sidebar.getBoundingClientRect();
-    const overSidebar =
-      lastMouseX >= sidebarRect.left && lastMouseX <= sidebarRect.right &&
-      lastMouseY >= sidebarRect.top  && lastMouseY <= sidebarRect.bottom;
+    const stackId = Number(el.dataset.stackId);
 
-    if (overSidebar) {
-      const stackId = Number(el.dataset.stackId);
-      const stack = stacks.find((s) => s.id === stackId);
-      el.classList.add("ejecting");
-      setTimeout(async () => {
-        grid.removeWidget(el);
-        placedIds.delete(stackId);
-        phantomStackIds.delete(stackId);
-        stacks = stacks.filter((s) => s.id !== stackId);
-        await api.deleteStack(stackId).catch(() => {});
-        for (const wId of (stack?.widget_ids || [])) {
-          const wEl = document.querySelector(`.sb-widget-item[data-widget-id="${wId}"]`);
-          if (wEl) {
-            wEl.classList.remove("returning");
-            void wEl.offsetWidth;
-            wEl.classList.add("returning");
-            wEl.addEventListener("animationend", () => wEl.classList.remove("returning"), { once: true });
-          }
-        }
-        syncPaletteStates();
-        saveLayoutSoon();
-      }, 200);
+    // dropped back on the library → remove
+    const lr = library.getBoundingClientRect();
+    if (pointer.x >= lr.left && pointer.x <= lr.right && pointer.y >= lr.top && pointer.y <= lr.bottom) {
+      await removeCard(stackId);
       return;
     }
-
-    // Card-to-card merge: mouse released over another placed card
-    if (candidate) {
-      const draggedStackId = Number(el.dataset.stackId);
-      const draggedStack   = stacks.find(s => s.id === draggedStackId);
-      const targetStackId  = Number(candidate.dataset.stackId);
-      const targetStack    = stacks.find(s => s.id === targetStackId);
-
-      if (draggedStack && targetStack) {
-        const draggedHasIntegration = draggedStack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
-        const targetHasIntegration  = targetStack.widget_ids.some(id => MULTIPAGE_TYPES.has(widgetsById[id]?.type));
-
-        if (draggedHasIntegration || targetHasIntegration) {
-          // Revert dragged card to its original position
-          const origX = Number(el.dataset.dragStartCol ?? -1);
-          const origY = Number(el.dataset.dragStartRow ?? -1);
-          if (origX >= 0 && origY >= 0) grid.update(el, { x: origX, y: origY });
-          showIntegrationToast();
-          return;
-        }
-
-        // Merge all widgets from dragged stack into target stack
-        const newIds  = [...new Set([...targetStack.widget_ids, ...draggedStack.widget_ids])];
-        const updated = await api.updateStack(targetStackId, { widget_ids: newIds });
-        targetStack.widget_ids = updated.widget_ids;
-
-        grid.removeWidget(el);
-        placedIds.delete(draggedStackId);
-        phantomStackIds.delete(draggedStackId);
-        stacks = stacks.filter(s => s.id !== draggedStackId);
-        await api.deleteStack(draggedStackId).catch(() => {});
-
-        const targetGridEl = [...grid.getGridItems()].find(e => Number(e.dataset.stackId) === targetStackId);
-        if (targetGridEl) {
-          const old = targetGridEl.querySelector(".grid-stack-item-content");
-          const newContent = buildPlacedContent(targetStack);
-          if (old) old.replaceWith(newContent);
-          const newCard = newContent.querySelector(".layout-stack-card");
-          if (newCard) {
-            newCard.classList.add("merging");
-            newCard.addEventListener("animationend", () => newCard.classList.remove("merging"), { once: true });
-          }
-        }
-
-        syncPaletteStates();
-        saveLayoutSoon();
-        return;
-      }
+    // dropped on a page tab → move (Alt: copy)
+    const tab = document.elementsFromPoint(pointer.x, pointer.y).find((n) => n.classList?.contains("page-tab"));
+    if (tab) {
+      const orig = { x: Number(el.dataset.dragStartCol), y: Number(el.dataset.dragStartRow) };
+      if (orig.x >= 0) grid.update(el, orig);
+      await moveCardToPage(stackId, Number(tab.dataset.pageIdx), { copy: !!pointer.alt });
+      return;
     }
-
-    const gsRect = gsEl.getBoundingClientRect();
-    const overGrid =
-      lastMouseX >= gsRect.left && lastMouseX <= gsRect.right &&
-      lastMouseY >= gsRect.top  && lastMouseY <= gsRect.bottom;
-    if (!overGrid) return;
+    // held over another card → stack
+    if (armed) {
+      const orig = { x: Number(el.dataset.dragStartCol), y: Number(el.dataset.dragStartRow) };
+      if (orig.x >= 0) grid.update(el, orig);
+      await mergeStacks(Number(armed.dataset.stackId), stackId);
+      return;
+    }
+    selectStack(stackId);
+    updateToolbar();
   });
 
-  setupDropZone();
+  // drag-in from the library
+  document.addEventListener("pointerdown", (e) => {
+    const item = e.target.closest?.(".sb-widget-item");
+    if (item && !e.target.closest("button")) {
+      dragInWidgetId = Number(item.dataset.widgetId);
+      draggingEl = null;
+      document.body.classList.add("is-dragging");
+      const end = () => { setTimeout(() => { document.body.classList.remove("is-dragging"); clearDwell(); }, 0); document.removeEventListener("pointerup", end); };
+      document.addEventListener("pointerup", end);
+    }
+  }, true);
+  grid.on("dropped", async (_ev, _prev, newNode) => {
+    const el = newNode?.el;
+    const widgetId = Number(el?.dataset.widgetId || dragInWidgetId);
+    const armed = dwell.armed ? dwell.el : null;
+    clearDwell();
+    const spot = { x: newNode.x, y: newNode.y, w: newNode.w, h: newNode.h };
+    if (el) grid.removeWidget(el, true, false);
+    document.body.classList.remove("is-dragging");
+    if (!widgetsById[widgetId]) return;
+    if (armed) {
+      const target = stacks.find((s) => s.id === Number(armed.dataset.stackId));
+      if (target) { await mergeWidgetIntoStack(target, widgetId); return; }
+    }
+    await placeWidget(widgetId, spot);
+  });
+
+  setupDrawToPlace();
   setupSectionToggles();
+  setupKeyboard();
   connectSSE();
 
-  // ── topbar settings nav ────────────────────────────────────────────────────
-  // Standalone buttons (Designer) + dropdown items both carry data-section.
+  // tiled pages
+  tiled = createTiledOverlay({
+    stage: byId("ed-stage"),
+    nodes: () => pageNodes().map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h })),
+    cellSize: () => ({ cw: dispW / COLS, ch: dispH / ROWS }),
+    scale: () => stageScale,
+    apply: (nodes) => {
+      const els = pageNodes();
+      grid.batchUpdate();
+      els.forEach((n, i) => { const t = nodes[i]; if (t) grid.update(n.el, { x: t.x, y: t.y, w: t.w, h: t.h }); });
+      grid.batchUpdate(false);
+    },
+    commit: () => saveLayoutSoon(),
+  });
+
+  // inspector
+  inspector = createInspector(byId("inspector"), inspectorCtx());
+
+  // history
+  history = createHistory({ snapshot, apply: applySnapshot, onChange: updateHistoryButtons });
+  byId("undo-btn").addEventListener("click", () => history.undo());
+  byId("redo-btn").addEventListener("click", () => history.redo());
+
+  // topbar nav
   for (const btn of document.querySelectorAll(".topbar-settings-btn[data-section]")) {
     btn.addEventListener("click", () => openSettingsPanel(btn.dataset.section));
   }
-
-  // Settings dropdown open/close + menu items
-  const settingsMenuBtn = byId("settings-menu-btn");
-  const settingsMenu = byId("settings-menu");
-  if (settingsMenuBtn && settingsMenu) {
-    settingsMenuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      settingsMenu.classList.toggle("hidden");
-    });
-    document.addEventListener("click", (e) => {
-      if (!settingsMenu.classList.contains("hidden") &&
-          !settingsMenu.contains(e.target) && !settingsMenuBtn.contains(e.target)) {
-        settingsMenu.classList.add("hidden");
-      }
-    });
-  }
+  const settingsMenuBtn = byId("settings-menu-btn"), settingsMenu = byId("settings-menu");
+  settingsMenuBtn.addEventListener("click", (e) => { e.stopPropagation(); settingsMenu.classList.toggle("hidden"); });
+  document.addEventListener("click", (e) => {
+    if (!settingsMenu.classList.contains("hidden") && !settingsMenu.contains(e.target) && !settingsMenuBtn.contains(e.target)) settingsMenu.classList.add("hidden");
+  });
   for (const item of document.querySelectorAll(".topbar-menu-item[data-section]")) {
-    item.addEventListener("click", () => {
-      openSettingsPanel(item.dataset.section);
-      settingsMenu?.classList.add("hidden");
-    });
+    item.addEventListener("click", () => { openSettingsPanel(item.dataset.section); settingsMenu.classList.add("hidden"); });
   }
+  const profileMenuBtn = byId("profile-menu-btn"), profileMenu = byId("profile-menu");
+  profileMenuBtn.addEventListener("click", (e) => { e.stopPropagation(); profileMenu.classList.toggle("hidden"); });
+  document.addEventListener("click", (e) => {
+    if (!profileMenu.classList.contains("hidden") && !profileMenu.contains(e.target) && !profileMenuBtn.contains(e.target)) profileMenu.classList.add("hidden");
+  });
+  byId("cmdk-btn").addEventListener("click", () => openPalette(buildCommands));
+  byId("templates-btn").addEventListener("click", openTemplates);
+  byId("import-file").addEventListener("change", onImportFile);
+  byId("lib-search").addEventListener("input", renderWidgets);
+  byId("open-display-link").href = `/display?profile=${encodeURIComponent(editingProfileName || String(editingProfileId))}`;
 
-  // Profile-switcher dropdown open/close
-  const profileMenuBtn = byId("profile-menu-btn");
-  const profileMenu = byId("profile-menu");
-  if (profileMenuBtn && profileMenu) {
-    profileMenuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      profileMenu.classList.toggle("hidden");
-    });
-    document.addEventListener("click", (e) => {
-      if (!profileMenu.classList.contains("hidden") &&
-          !profileMenu.contains(e.target) && !profileMenuBtn.contains(e.target)) {
-        profileMenu.classList.add("hidden");
-      }
-    });
-  }
+  // screen size
+  byId("screen-preset").addEventListener("change", (e) => {
+    const v = e.target.value;
+    if (v === "custom") { byId("custom-res").classList.remove("hidden"); byId("res-w").focus(); return; }
+    const [w, h] = v.split("x").map(Number);
+    setScreen(w, h);
+  });
+  const onRes = () => setScreen(parseInt(byId("res-w").value), parseInt(byId("res-h").value));
+  byId("res-w").addEventListener("change", onRes);
+  byId("res-h").addEventListener("change", onRes);
+  byId("rotate-btn").addEventListener("click", () => setScreen(dispH, dispW));
+
+  // cockpit dock
+  byId("ed-dock").addEventListener("click", (e) => {
+    const act = e.target.closest("button")?.dataset.act;
+    const sel = selectedStackId;
+    if (act === "add") openPalette(buildCommands, { initial: "Add " });
+    else if (act === "undo") history.undo();
+    else if (act === "redo") history.redo();
+    else if (act === "duplicate" && sel != null) duplicateCard(sel);
+    else if (act === "fill" && sel != null) fillCard(sel);
+    else if (act === "stack" && sel != null) openStackMenu(stacks.find((s) => s.id === sel), e.target.closest("button"));
+    else if (act === "inspect") document.body.classList.toggle("sheet-open");
+    else if (act === "display") window.open(byId("open-display-link").href, "_blank");
+    else if (["duplicate", "fill", "stack"].includes(act)) toast("Select a card first");
+  });
+
+  document.addEventListener("tb:prefs", () => { prefs = getPrefs(); applyPrefs(); });
+  applyPrefs();
 
   renderWidgets();
   renderPageTabs();
   renderBoard();
+  inspector.render(true);
+  history.reset();
 
-  byId("page-tab-add").addEventListener("click", () => {
-    currentPage().layout = currentLayout();
-    const newId = Math.max(0, ...board.pages.map((p) => p.id)) + 1;
-    board.pages.push({ id: newId, name: `Page ${newId}`, layout: [] });
-    currentPageIdx = board.pages.length - 1;
-    renderBoard(); renderPageTabs(); saveLayoutSoon();
-  });
-
-  requestAnimationFrame(() => updatePreviewSize());
-
-  function onResChange() {
-    dispW = Math.max(320, parseInt(byId("res-w").value) || 1920);
-    dispH = Math.max(240, parseInt(byId("res-h").value) || 720);
-    api.updateProfileBoard(editingProfileId, { disp_w: dispW, disp_h: dispH });
-    byId("res-w").value = dispW;
-    byId("res-h").value = dispH;
-    updatePreviewSize();
-  }
-  byId("res-w").addEventListener("change", onResChange);
-  byId("res-h").addEventListener("change", onResChange);
-
+  byId("page-tab-add").addEventListener("click", () => addPage());
+  byId("canvas-area").addEventListener("scroll", () => updateToolbar(), { passive: true });
   window.addEventListener("resize", updatePreviewSize);
+  new ResizeObserver(() => updatePreviewSize()).observe(byId("canvas-area"));
 }
 
 init();
