@@ -7,6 +7,7 @@
 
 const SPARK_TYPES = new Set(["ping", "proxmox", "opnsense", "truenas", "rest"]);
 const SPARK_OPT_IN = new Set(["ping"]); // graphs off unless switched on
+const PAGED_TYPES = new Set(["weather", "netbox", "truenas"]); // widgets with several pages
 const ALERT_TYPES = new Set(["ping", "proxmox", "truenas", "opnsense", "adguard", "weather", "rest", "bookmarks", "nowplaying", "rss"]);
 
 function h(tag, attrs = {}, ...children) {
@@ -97,8 +98,8 @@ export function createInspector(root, ctx) {
     const addable = ctx.stackableWidgets(stack);
     out.push(section("Widgets in this card", list,
       addable.length ? select([["", "+ Add a widget to this card…"], ...addable.map((w) => [String(w.id), `${w.title} (${w.type})`])], "", (v) => v && ctx.addToStack(stack, Number(v))) : null,
-      stack.widget_ids.length > 1 ? row("Switch widgets", select([["tap", "Follow screen setting"], ["auto", "Always cycle"], ["manual", "Only when tapped"]], stack.cycle_mode || "tap", (v) => ctx.updateStack(stack, { cycle_mode: v })),
-        "“Cycle stacked cards” is under This screen (click empty grid).") : null));
+      stack.widget_ids.length > 1 || PAGED_TYPES.has(widget?.type) ? row("Auto-cycle", select([["tap", "Follow screen setting"], ["auto", "Always"], ["manual", "Only when tapped"]], stack.cycle_mode || "tap", (v) => ctx.updateStack(stack, { cycle_mode: v })),
+        "“Cycle cards automatically” is under This screen (click empty grid).") : null));
 
     if (widget) {
       const cfg = widget.config || {};
@@ -189,9 +190,9 @@ export function createInspector(root, ctx) {
       h("div", { class: "insp-hint", text: "Open this address on a screen to pin it to this profile." }),
       row("Rotate pages every", h("div", { class: "insp-inline" }, num(o.rotate_sec ?? 0, { min: 0, onChange: (v) => set("rotate_sec", Math.max(0, v || 0)) }), h("span", { text: "s (0 = off)" }))),
       row("Pause after a touch", h("div", { class: "insp-inline" }, num(o.rotate_pause_sec ?? 60, { min: 0, onChange: (v) => set("rotate_pause_sec", Math.max(0, v || 0)) }), h("span", { text: "s" }))),
-      toggle("Cycle stacked cards", !!o.stack_cycle, (v) => set("stack_cycle", v),
-        "Cards stacked in one spot take turns. Stack them by dragging a card onto another and holding, or with “Add a widget to this card”."),
-      row("Switch cards every", h("div", { class: "insp-inline" }, num(o.stack_cycle_sec ?? 12, { min: 4, onChange: (v) => set("stack_cycle_sec", Math.max(4, v || 12)) }), h("span", { text: "s" }))),
+      toggle("Cycle cards automatically", !!o.stack_cycle, (v) => set("stack_cycle", v),
+        "Stacked cards take turns, and Weather, NetBox and TrueNAS step through their pages. Stack cards by dragging one onto another and holding."),
+      row("Switch every", h("div", { class: "insp-inline" }, num(o.stack_cycle_sec ?? 12, { min: 4, onChange: (v) => set("stack_cycle_sec", Math.max(4, v || 12)) }), h("span", { text: "s" }))),
       toggle("Jump to a card when it turns critical", o.alert_takeover !== false, (v) => set("alert_takeover", v)),
       toggle("Dim cards with stale data", o.staleness !== false, (v) => set("staleness", v)),
       toggle("Keep the screen awake", o.wake_lock !== false, (v) => set("wake_lock", v)),

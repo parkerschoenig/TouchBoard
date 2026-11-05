@@ -7,7 +7,8 @@
 //   rotate_sec          rotate pages every N seconds (0 = off); pages with
 //                       rotate:false are skipped
 //   rotate_pause_sec    pause rotation for N seconds after someone touches it
-//   stack_cycle         cycle every stack of 2+ cards automatically
+//   stack_cycle         cycle cards automatically: stacks take turns and
+//                       multi-page widgets step through their pages
 //   stack_cycle_sec     how often cycling stacks advance
 //
 // A stack's own cycle_mode: "tap" (the default) follows stack_cycle, "auto"
@@ -170,6 +171,8 @@ function buildPagePanel(page) {
     const staleEl = Object.assign(document.createElement("div"), { className: "stale-badge" });
     el.append(bodyEl, dotsEl, staleEl);
 
+    // Widgets that handle their own taps stop the click, so note the touch here.
+    el.addEventListener("pointerdown", () => noteTouch(stack.id), true);
     el.addEventListener("click", (e) => {
       if (editing) return;
       // Links, buttons and widget controls handle their own taps.
@@ -266,6 +269,26 @@ function cycle(stack) {
   activeIndex[stack.id] = ((activeIndex[stack.id] || 0) + 1) % ids.length;
   lastCycleAt[stack.id] = now();
   renderCell(stack);
+}
+
+// One step of automatic cycling: the next page of a multi-page widget (Weather,
+// NetBox, TrueNAS), then the next widget in the stack starting on its first
+// page, then back to the beginning.
+const pagedRoot = (stack) => cellByStack[stack.id]?.bodyEl.querySelector(".w-paged") || null;
+const canStep = (stack) => idsOf(stack).length > 1 || !!pagedRoot(stack);
+function toFirstPage(stack) {
+  const p = pagedRoot(stack);
+  if (p && Number(p.dataset.pageIndex) !== 0) p._showPage(0);
+}
+function step(stack) {
+  lastCycleAt[stack.id] = now();
+  const p = pagedRoot(stack);
+  if (p) {
+    const i = Number(p.dataset.pageIndex) || 0;
+    if (i + 1 < (Number(p.dataset.pageCount) || 1)) { p._showPage(i + 1); return; }
+  }
+  if (idsOf(stack).length > 1) { cycle(stack); toFirstPage(stack); }
+  else toFirstPage(stack);
 }
 
 function noteTouch(stackId) {
@@ -451,7 +474,7 @@ function ticker() {
     const mode = c.stack.cycle_mode || "tap";
     if (!(mode === "auto" || (mode === "tap" && cycleAll))) continue;
     if (t - (touchedAt[c.stack.id] || 0) < 30000) continue;
-    if (t - (lastCycleAt[c.stack.id] || 0) >= cycleMs) cycle(c.stack);
+    if (t - (lastCycleAt[c.stack.id] || 0) >= cycleMs && canStep(c.stack)) step(c.stack);
   }
   // page rotation
   const rot = Number(opt("rotate_sec", 0));
