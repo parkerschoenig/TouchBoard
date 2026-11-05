@@ -4,9 +4,9 @@ from pydantic import BaseModel, Field
 
 WidgetType = Literal[
     "ping", "weather", "clock", "proxmox", "truenas", "netbox", "adguard", "opnsense", "stream", "calendar",
-    "bookmarks", "rest", "nowplaying", "notes", "photos", "rss",
+    "bookmarks", "rest", "nowplaying", "notes", "photos", "rss", "lights",
 ]
-SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense", "google_calendar", "plex", "jellyfin", "rest"]
+SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense", "google_calendar", "plex", "jellyfin", "rest", "homeassistant"]
 
 
 class WidgetIn(BaseModel):

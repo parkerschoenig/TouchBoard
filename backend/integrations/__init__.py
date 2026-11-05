@@ -1,6 +1,6 @@
 """Integration registry. Each module exposes `async def fetch(widget, data_source) -> dict`."""
 from . import (
-    adguard, bookmarks, clock, google_calendar, netbox, notes, nowplaying, opnsense, photos,
+    adguard, bookmarks, clock, google_calendar, homeassistant, netbox, notes, nowplaying, opnsense, photos,
     ping, proxmox, rest, rss, stream, truenas, weather,
 )
 
@@ -21,6 +21,7 @@ REGISTRY = {
     "notes":      notes.fetch,
     "photos":     photos.fetch,
     "rss":        rss.fetch,
+    "lights":     homeassistant.fetch,
 }
 
 

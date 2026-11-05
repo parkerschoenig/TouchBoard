@@ -1,11 +1,14 @@
 """REST + SSE routes."""
 
+from typing import Literal, Optional
+
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .. import alerts, db, favicons, secrets, integrations, backup, update_check
-from ..integrations import bookmarks as bookmarks_int, nowplaying as nowplaying_int, photos as photos_int, rest as rest_int
+from ..integrations import (bookmarks as bookmarks_int, homeassistant as ha_int, nowplaying as nowplaying_int,
+                            photos as photos_int, rest as rest_int)
 from ..auth import generate_token, hash_password, verify_password
 from ..models import (
     BackupExportIn,
@@ -275,6 +278,53 @@ async def rest_preview(body: RestPreviewIn, user: dict = Depends(current_user)):
     except Exception as exc:
         return {"ok": False, "error": str(exc) or type(exc).__name__}
     return {"ok": status < 400, "status": status, "body": doc}
+
+
+# ── Home Assistant lights ─────────────────────────────────────────────────────
+
+class LightsActionIn(BaseModel):
+    action: Literal["toggle", "turn_on", "turn_off"]
+    entity_ids: list[str]
+    brightness: Optional[int] = None   # 1–100, with turn_on
+
+
+@router.post("/widgets/{widget_id}/lights")
+async def lights_action(widget_id: int, body: LightsActionIn, tb_session: str = Cookie(default=None)):
+    """Toggle lights from the display. Public like the display itself, but
+    limited to the entities this widget shows, and to on/off/toggle. A widget
+    with require_login only accepts signed-in users."""
+    w = db.get_widget(widget_id)
+    if not w or w["type"] != "lights":
+        raise HTTPException(404, "widget not found")
+    cfg = w.get("config") or {}
+    if cfg.get("require_login") and not (tb_session and db.get_user_by_session(tb_session)):
+        raise HTTPException(401, "Sign in to TouchBoard to control these lights.")
+    shown = {e.get("id") for e in ((poller.cache.get(widget_id) or {}).get("data") or {}).get("entities") or []}
+    allowed = shown | {e for e in cfg.get("entities") or [] if isinstance(e, str)}
+    ids = [e for e in dict.fromkeys(body.entity_ids) if e in allowed and e.split(".", 1)[0] in ha_int.CONTROLLABLE]
+    if not ids:
+        raise HTTPException(403, "Those lights aren't on this card.")
+    ds = _with_source(w)
+    if not ds or ds.get("type") != "homeassistant":
+        raise HTTPException(400, "This card has no Home Assistant connection.")
+    try:
+        await ha_int.act(ds, ids, body.action, body.brightness)
+    except Exception as exc:
+        raise HTTPException(502, str(exc) or type(exc).__name__)
+    poller.force_poll(widget_id)
+    return await poller.poll_now(widget_id)
+
+
+@router.get("/datasources/{ds_id}/ha-entities")
+async def ha_entities(ds_id: int, user: dict = Depends(current_user)):
+    """Lights and switches in Home Assistant, for the editor's picker."""
+    ds = _with_source({"data_source_id": ds_id})
+    if not ds or ds.get("type") != "homeassistant":
+        raise HTTPException(404, "not a Home Assistant connection")
+    try:
+        return {"ok": True, "entities": await ha_int.list_entities(ds)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc) or type(exc).__name__}
 
 
 @router.post("/notify/test")

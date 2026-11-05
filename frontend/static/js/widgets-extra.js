@@ -1,5 +1,5 @@
 // Renderers for the v2 widgets: bookmarks, REST/JSON, now playing, notes,
-// photo frame and RSS. Each takes (widget, data, envelope) like the others in
+// photo frame, RSS and Home Assistant lights. Each takes (widget, data, envelope) like the others in
 // widgets.js and returns an element.
 
 import {
@@ -376,7 +376,107 @@ export function renderRss(widget, data) {
   return wrap;
 }
 
+// ── Lights (Home Assistant) ──────────────────────────────────────────────────
+// Tap a tile to toggle that light; tap an area's button to switch the whole
+// area. The tile flips straight away, then the next update from the server
+// confirms it (or puts it back, with a shake, if the call failed).
+
+const BULB = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const PLUG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function _lightsCall(widget, action, ids) {
+  return fetch(`/api/widgets/${widget.id}/lights`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, entity_ids: ids }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  });
+}
+
+function _paintTile(tile, it) {
+  tile.classList.toggle("is-on", !!it.on);
+  tile.classList.toggle("is-off-line", !it.available);
+  tile.style.setProperty("--lt-color", it.on && it.color ? it.color : "");
+  tile.querySelector(".lt-state").textContent = !it.available ? "Unavailable"
+    : it.on ? (it.brightness != null ? `On · ${it.brightness}%` : "On") : "Off";
+  tile.setAttribute("aria-pressed", it.on ? "true" : "false");
+}
+
+export function renderLights(widget, data) {
+  const cfg = widget.config || {};
+  const wrap = el("div", "w-lights");
+  const items = data?.entities || [];
+  if (!items.length) {
+    wrap.appendChild(el("div", "w-empty", data?.missing?.length
+      ? "The picked lights weren't found in Home Assistant."
+      : "No lights yet. Edit this widget to pick some."));
+    return wrap;
+  }
+  const live = !document.body.classList.contains("layout-editor-page");
+  const fail = (tiles, before) => {
+    tiles.forEach((t, i) => { _paintTile(t, before[i]); t.classList.remove("lt-fail"); void t.offsetWidth; t.classList.add("lt-fail"); });
+  };
+
+  const groups = new Map();
+  const byArea = cfg.group_by_area !== false && new Set(items.map((i) => i.area || "")).size > 1;
+  for (const it of items) {
+    const key = byArea ? (it.area || "Other") : "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+
+  // areas alphabetically, lights without one last
+  const ordered = [...groups].sort(([a], [b]) => (a === "Other") - (b === "Other") || a.localeCompare(b));
+  for (const [area, list] of ordered) {
+    const tiles = [];
+    if (area) {
+      const head = el("div", "lt-area");
+      head.appendChild(el("span", "lt-area-name", area));
+      const anyOn = list.some((i) => i.on);
+      const all = el("button", "lt-area-btn tb-ctrl", anyOn ? "All off" : "All on");
+      all.type = "button";
+      all.dataset.interactive = "1";
+      all.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!live) return;
+        const target = !list.some((i) => i.on);
+        const before = list.map((i) => ({ ...i }));
+        list.forEach((i, k) => { if (i.available) { i.on = target; _paintTile(tiles[k], i); } });
+        all.textContent = target ? "All off" : "All on";
+        _lightsCall(widget, target ? "turn_on" : "turn_off", list.filter((i) => i.available).map((i) => i.id))
+          .catch(() => { list.forEach((i, k) => Object.assign(i, before[k])); fail(tiles, before); all.textContent = anyOn ? "All off" : "All on"; });
+      });
+      if (list.some((i) => i.available)) head.appendChild(all);
+      wrap.appendChild(head);
+    }
+    const grid = el("div", "lt-grid");
+    for (const it of list) {
+      const tile = el("button", "lt-tile tb-ctrl");
+      tile.type = "button";
+      tile.dataset.interactive = "1";
+      tile.title = it.id;
+      tile.innerHTML = `<span class="lt-ico">${it.domain === "switch" ? PLUG : BULB}</span><span class="lt-name"></span><span class="lt-state"></span>`;
+      tile.querySelector(".lt-name").textContent = it.name;
+      _paintTile(tile, it);
+      tile.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!live || !it.available) return;
+        const before = { ...it };
+        it.on = !it.on;
+        if (!it.on) it.brightness = null;
+        _paintTile(tile, it);
+        _lightsCall(widget, "toggle", [it.id]).catch(() => { Object.assign(it, before); fail([tile], [before]); });
+      });
+      tiles.push(tile);
+      grid.appendChild(tile);
+    }
+    wrap.appendChild(grid);
+  }
+  return wrap;
+}
+
 export const EXTRA_RENDERERS = {
+  lights: renderLights,
   bookmarks: renderBookmarks,
   rest: renderRest,
   nowplaying: renderNowPlaying,
