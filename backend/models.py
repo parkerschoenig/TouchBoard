@@ -2,8 +2,11 @@
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
-WidgetType = Literal["ping", "weather", "clock", "proxmox", "truenas", "netbox", "adguard", "opnsense", "stream", "calendar"]
-SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense", "google_calendar"]
+WidgetType = Literal[
+    "ping", "weather", "clock", "proxmox", "truenas", "netbox", "adguard", "opnsense", "stream", "calendar",
+    "bookmarks", "rest", "nowplaying", "notes", "photos", "rss", "lights", "thermostat", "tv",
+]
+SourceType = Literal["proxmox", "truenas", "netbox", "adguard", "opnsense", "google_calendar", "plex", "jellyfin", "rest", "homeassistant", "frigate"]
 
 
 class WidgetIn(BaseModel):
@@ -25,13 +28,13 @@ class WidgetUpdate(BaseModel):
 class StackIn(BaseModel):
     name: str
     widget_ids: list[int] = Field(default_factory=list)
-    cycle_mode: Literal["tap", "auto"] = "tap"
+    cycle_mode: Literal["tap", "auto", "manual"] = "tap"
 
 
 class StackUpdate(BaseModel):
     name: Optional[str] = None
     widget_ids: Optional[list[int]] = None
-    cycle_mode: Optional[Literal["tap", "auto"]] = None
+    cycle_mode: Optional[Literal["tap", "auto", "manual"]] = None
 
 
 class LayoutNode(BaseModel):
@@ -44,6 +47,8 @@ class LayoutNode(BaseModel):
 
 class BoardUpdate(BaseModel):
     columns: Optional[int] = None
+    rows: Optional[int] = Field(default=None, ge=4, le=64)
+    options: Optional[dict[str, Any]] = None
     layout: Optional[list[LayoutNode]] = None  # legacy, ignored if pages provided
     pages: Optional[list[dict]] = None
 
@@ -58,6 +63,8 @@ class ProfileUpdate(BaseModel):
     columns: Optional[int] = None
     layout: Optional[list[LayoutNode]] = None  # legacy, ignored if pages provided
     pages: Optional[list[dict]] = None
+    rows: Optional[int] = Field(default=None, ge=4, le=64)
+    options: Optional[dict[str, Any]] = None
     disp_w: Optional[int] = None
     disp_h: Optional[int] = None
 
@@ -112,6 +119,8 @@ class UserUpdate(BaseModel):
 class SettingsPatch(BaseModel):
     theme_style:         Optional[str] = None
     theme_font:          Optional[str] = None
+    theme_shape:         Optional[str] = None
+    theme_pattern:       Optional[str] = None
     card_bg_color:       Optional[str] = None
     card_bg_opacity:     Optional[str] = None
     card_gradient:       Optional[str] = None
@@ -133,6 +142,10 @@ class SettingsPatch(BaseModel):
     onboarding_done:     Optional[str] = None
     tips_enabled:        Optional[str] = None
     widget_font_scale:   Optional[str] = None
+    notify_ntfy_url:     Optional[str] = None
+    notify_webhook_url:  Optional[str] = None
+    notify_min_level:    Optional[Literal["warn", "crit"]] = None
+    notify_cooldown_min: Optional[str] = None
 
 
 class BackupExportIn(BaseModel):

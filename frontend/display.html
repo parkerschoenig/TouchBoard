@@ -9,14 +9,17 @@
   <link rel="icon" href="/static/img/favicon.ico?v=1" sizes="any" />
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png?v=1" />
   <link rel="stylesheet" href="/static/css/app.css" />
+  <link rel="stylesheet" href="/static/css/v2.css" />
+  <link rel="stylesheet" href="/static/css/themes.css" />
 </head>
 <body class="display">
   <div class="board" id="board"></div>
-  <div class="page-indicator" id="page-indicator" aria-hidden="true">
+  <div class="page-indicator" id="page-indicator" role="button" tabindex="0" aria-label="Next page">
     <span class="pi-name" id="pi-name"></span>
     <div class="pi-dots" id="pi-dots"></div>
   </div>
   <div class="display-update-badge hidden" id="display-update-badge" aria-hidden="true">Update available</div>
+  <script src="/static/vendor/qrcode.js"></script>
   <script type="module" src="/static/js/display.js"></script>
 </body>
 </html>

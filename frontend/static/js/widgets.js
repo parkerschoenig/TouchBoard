@@ -2,6 +2,18 @@
 // `envelope` is the latest poll result: { widget_id, type, data, ts } or null.
 
 import { api } from "./api.js";
+import { EXTRA_RENDERERS } from "./widgets-extra.js";
+import { sparkline, series } from "./primitives.js";
+
+// Small sparkline wrapper used by the existing widgets (history comes from the
+// poller's envelope). Returns null when there isn't enough history yet.
+function _spark(envelope, key, cls = "") {
+  const h = series(envelope, key);
+  if (h.filter((v) => v != null).length < 2) return null;
+  const wrap = el("span", "w-spark " + cls);
+  wrap.appendChild(sparkline(h));
+  return wrap;
+}
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -125,6 +137,17 @@ function _openProxmoxColorPicker(anchor, widget, bodyEl) {
   });
 }
 
+// ── Multi-page widgets ───────────────────────────────────────────────────────
+// Weather, NetBox and TrueNAS have several pages. They expose them on their
+// root element so the display's cycle timer can step through them.
+function exposePages(wrap, pages, view, show) {
+  if (pages.length < 2) return;
+  wrap.classList.add("w-paged");
+  wrap.dataset.pageCount = String(pages.length);
+  wrap.dataset.pageIndex = String(Math.max(0, pages.indexOf(view)));
+  wrap._showPage = (i) => show(pages[((i % pages.length) + pages.length) % pages.length]);
+}
+
 // ── Shared view-dots builder ─────────────────────────────────────────────────
 
 function buildViewDots(views, currentView, onSelect) {
@@ -225,25 +248,25 @@ function renderWeather(widget, data) {
   }
 
   const weatherViews = ["current", "hourly", "daily"];
-  wrap.appendChild(buildViewDots(weatherViews, view, (v) => {
-    _weatherView.set(widget.id, v);
-    wrap.replaceWith(renderWeather(widget, data));
-  }));
-
+  const show = (v) => { _weatherView.set(widget.id, v); wrap.replaceWith(renderWeather(widget, data)); };
+  wrap.appendChild(buildViewDots(weatherViews, view, show));
   wrap.addEventListener("click", (e) => {
     e.stopPropagation();
-    const next = view === "current" ? "hourly" : view === "hourly" ? "daily" : "current";
-    _weatherView.set(widget.id, next);
-    wrap.replaceWith(renderWeather(widget, data));
+    show(weatherViews[(weatherViews.indexOf(view) + 1) % weatherViews.length]);
   });
+  exposePages(wrap, weatherViews, view, show);
 
   return wrap;
 }
 
-function renderPingRow(t) {
+function renderPingRow(t, envelope, showSpark) {
   const row = el("div", "ping-row");
   row.appendChild(el("span", "dot " + (t.up ? "up" : "down")));
   row.appendChild(el("span", "ping-label", t.label || t.address));
+  if (showSpark) {
+    const sp = _spark(envelope, `latency:${t.label || t.address}`, "ping-spark");
+    if (sp) row.appendChild(sp);
+  }
   const meta = el("span", "ping-meta");
   meta.textContent = t.up
     ? (t.latency_ms != null ? `${t.latency_ms} ms` : "up")
@@ -252,8 +275,10 @@ function renderPingRow(t) {
   return row;
 }
 
-function renderPing(widget, data) {
+function renderPing(widget, data, envelope) {
   const wrap = el("div", "w-ping");
+  // Off unless switched on: on a small card the graph crowds out the host name.
+  const showSpark = widget.config?.sparklines === true;
   const targets = (data && data.targets) || [];
   if (!targets.length) {
     wrap.appendChild(el("div", "w-empty", "No targets configured"));
@@ -262,7 +287,7 @@ function renderPing(widget, data) {
 
   const hasGroups = targets.some((t) => t.group);
   if (!hasGroups) {
-    for (const t of targets) wrap.appendChild(renderPingRow(t));
+    for (const t of targets) wrap.appendChild(renderPingRow(t, envelope, showSpark));
     return wrap;
   }
 
@@ -277,7 +302,7 @@ function renderPing(widget, data) {
 
   for (const key of groupOrder) {
     if (key) wrap.appendChild(el("div", "ping-group-header", key));
-    for (const t of grouped[key]) wrap.appendChild(renderPingRow(t));
+    for (const t of grouped[key]) wrap.appendChild(renderPingRow(t, envelope, showSpark));
   }
   return wrap;
 }
@@ -292,7 +317,6 @@ function renderStub(widget, data) {
 
 // ── Clock ─────────────────────────────────────────────────────────────────────
 
-const _clockTimers = new Map(); // widget.id → intervalId
 
 function _tzNow(tz) {
   try {
@@ -432,8 +456,13 @@ function renderClock(widget, _data) {
   }
 
   tick();
-  if (_clockTimers.has(widget.id)) clearInterval(_clockTimers.get(widget.id));
-  _clockTimers.set(widget.id, setInterval(tick, 1000));
+  // One timer per rendered clock, stopped once it has left the page. (Keying by
+  // widget id let a second copy, e.g. a Designer thumbnail, stop the first.)
+  let seen = false, misses = 0;
+  const timer = setInterval(() => {
+    if (wrap.isConnected) { seen = true; tick(); }
+    else if (seen || ++misses > 5) clearInterval(timer);
+  }, 1000);
 
   return wrap;
 }
@@ -574,15 +603,13 @@ function renderNetBox(widget, data) {
   }
 
   if (pages.length > 1) {
-    wrap.appendChild(buildViewDots(pages, view, (v) => {
-      _netboxView.set(widget.id, v);
-      wrap.replaceWith(renderNetBox(widget, data));
-    }));
+    const show = (v) => { _netboxView.set(widget.id, v); wrap.replaceWith(renderNetBox(widget, data)); };
+    wrap.appendChild(buildViewDots(pages, view, show));
     wrap.addEventListener("click", (e) => {
       e.stopPropagation();
-      _netboxView.set(widget.id, pages[(pages.indexOf(view) + 1) % pages.length]);
-      wrap.replaceWith(renderNetBox(widget, data));
+      show(pages[(pages.indexOf(view) + 1) % pages.length]);
     });
+    exposePages(wrap, pages, view, show);
   }
 
   return wrap;
@@ -610,7 +637,7 @@ function _miniBar(pct, warn) {
 }
 
 function _gaugeColor(pct) {
-  return pct > 85 ? "#ef4444" : pct > 65 ? "#fb923c" : "#22c55e";
+  return pct > 85 ? "var(--tb-crit)" : pct > 65 ? "var(--tb-warn)" : "var(--tb-ok)";
 }
 
 // Multi-segment donut SVG. segments: [{color, pct}]
@@ -624,18 +651,23 @@ function _buildDonut(segments, center = null) {
   function mkRing(stroke, pct, offset) {
     const c = document.createElementNS(ns, "circle");
     c.setAttribute("cx", "18"); c.setAttribute("cy", "18"); c.setAttribute("r", "15.9155");
-    c.setAttribute("fill", "none"); c.setAttribute("stroke", stroke);
+    c.setAttribute("fill", "none"); c.style.stroke = stroke;
     c.setAttribute("stroke-width", "3.8");
     c.setAttribute("stroke-dasharray", `${pct} ${100 - pct}`);
     c.setAttribute("stroke-dashoffset", String(offset));
     return c;
   }
 
-  svg.appendChild(mkRing("#2d3748", 100, 0));
+  const track = mkRing("var(--tb-track)", 100, 0);
+  track.classList.add("tb-ring-track");
+  svg.appendChild(track);
   let cum = 0;
   for (const { color, pct } of segments) {
     if (pct < 0.3) { cum += pct; continue; }
-    svg.appendChild(mkRing(color, pct, 25 - cum));
+    const ring = mkRing(color, pct, 25 - cum);
+    ring.classList.add("tb-ring-val");
+    if (segments.length === 1) ring.classList.add("tb-ring-solo");
+    svg.appendChild(ring);
     cum += pct;
   }
 
@@ -645,7 +677,8 @@ function _buildDonut(segments, center = null) {
     txt.setAttribute("y", "18");
     txt.setAttribute("text-anchor", "middle");
     txt.setAttribute("dominant-baseline", "middle");
-    txt.setAttribute("fill", center.color || "#e6edf3");
+    txt.style.fill = center.color || "var(--text)";
+    txt.classList.add("tb-ring-text");
     txt.setAttribute("font-size", "6.5");
     txt.setAttribute("font-weight", "700");
     txt.textContent = center.text;
@@ -655,7 +688,7 @@ function _buildDonut(segments, center = null) {
   return svg;
 }
 
-function renderTruenas(widget, data) {
+function renderTruenas(widget, data, envelope) {
   if (!data) {
     const w = el("div", "w-truenas"); w.appendChild(el("div", "w-empty", "Loading TrueNAS…")); return w;
   }
@@ -769,21 +802,21 @@ function renderTruenas(widget, data) {
     ));
     const cpuInfo = el("div", "tn-cpu-info");
     cpuInfo.appendChild(el("div", "tn-stat-label", "CPU Usage"));
+    const sp = _spark(envelope, "cpu", "tn-spark");
+    if (sp) cpuInfo.appendChild(sp);
     page.appendChild(cpuInfo);
     body.appendChild(page);
   }
 
   // ── Dot navigation ────────────────────────────────────────────────────────
   if (pages.length > 1) {
-    wrap.appendChild(buildViewDots(pages, view, (v) => {
-      _tnView.set(widget.id, v);
-      wrap.replaceWith(renderTruenas(widget, data));
-    }));
+    const show = (v) => { _tnView.set(widget.id, v); wrap.replaceWith(renderTruenas(widget, data, envelope)); };
+    wrap.appendChild(buildViewDots(pages, view, show));
     wrap.addEventListener("click", (e) => {
       e.stopPropagation();
-      _tnView.set(widget.id, pages[(pages.indexOf(view) + 1) % pages.length]);
-      wrap.replaceWith(renderTruenas(widget, data));
+      show(pages[(pages.indexOf(view) + 1) % pages.length]);
     });
+    exposePages(wrap, pages, view, show);
   }
 
   return wrap;
@@ -813,7 +846,7 @@ function _pxBar(pct, color, barType) {
 }
 
 function _pxPct(pct) {
-  const color = pct > 85 ? "#ef4444" : pct > 65 ? "#fb923c" : "#22c55e";
+  const color = _gaugeColor(pct);
   const span = el("span", "px-pct", pct.toFixed(1) + "%");
   span.style.color = color;
   return span;
@@ -822,7 +855,7 @@ function _pxPct(pct) {
 function _pxStatusDot(status) {
   const dot = el("span", "px-dot");
   dot.style.background = status === "running" || status === "online" || status === "active"
-    ? "#22c55e" : status === "stopped" ? "#6b7280" : "#ef4444";
+    ? "var(--tb-ok)" : status === "stopped" ? "#6b7280" : "var(--tb-crit)";
   return dot;
 }
 
@@ -865,7 +898,7 @@ function _pxSection(title, count, total, items, columns) {
   return sec;
 }
 
-function renderProxmox(widget, data) {
+function renderProxmox(widget, data, envelope) {
   const wrap = el("div", "w-proxmox");
   if (!data) { wrap.appendChild(el("div", "w-empty", "Loading Proxmox…")); return wrap; }
   if (data.error) { wrap.appendChild(el("div", "w-error", data.error)); return wrap; }
@@ -876,12 +909,22 @@ function renderProxmox(widget, data) {
   const hdr = el("div", "px-header");
 
   const upEl = el("div", "px-uptime", `Uptime: ${_fmtUptime(data.uptime)}`);
-  hdr.appendChild(upEl);
+  const left = el("div", "px-head-left");
+  left.appendChild(upEl);
+  if (widget.config?.sparklines !== false) {
+    const sparks = el("div", "px-sparks");
+    for (const [k, label] of [["cpu", "CPU"], ["ram", "RAM"]]) {
+      const sp = _spark(envelope, k, "px-spark");
+      if (sp) { const g = el("div", "px-spark-row"); g.append(el("span", "px-spark-lbl", label), sp); sparks.appendChild(g); }
+    }
+    if (sparks.childElementCount) left.appendChild(sparks);
+  }
+  hdr.appendChild(left);
 
   const stats = el("div", "px-stats");
   for (const [label, pct] of [["CPU", data.cluster_cpu_pct], ["RAM", data.cluster_mem_pct]]) {
     const chip = el("div", "px-stat-chip");
-    const color = pct > 85 ? "#ef4444" : pct > 65 ? "#fb923c" : "#22c55e";
+    const color = _gaugeColor(pct);
     const ring = _buildDonut([{ color, pct }], { text: pct?.toFixed(1) + "%", color });
     ring.classList.add("px-mini-donut");
     chip.appendChild(ring);
@@ -962,7 +1005,7 @@ function renderAdGuard(widget, data) {
   return wrap;
 }
 
-function renderOpnsense(widget, data) {
+function renderOpnsense(widget, data, envelope) {
   const wrap = el("div", "w-opnsense");
   if (!data) { wrap.appendChild(el("div", "w-empty", "Loading OPNsense…")); return wrap; }
   if (data.error) { wrap.appendChild(el("div", "w-error", data.error)); return wrap; }
@@ -1006,6 +1049,8 @@ function renderOpnsense(widget, data) {
     for (const iface of ifaces) {
       const row = el("div", "op-iface-row");
       row.appendChild(el("span", "op-iface-name", iface.name || iface.device));
+      const sp = ocfg.sparklines !== false ? _spark(envelope, `rx:${iface.name || iface.device}`, "op-spark") : null;
+      if (sp) row.appendChild(sp);
       const tx = el("span", "op-iface-tx", "↑ " + fmtRate(iface.tx_mbps));
       const rx = el("span", "op-iface-rx", "↓ " + fmtRate(iface.rx_mbps));
       tx.style.color = upColor;   tx.dataset.opsDir = "tx";
@@ -1034,26 +1079,38 @@ function _loadHlsJs() {
   return _hlsPromise;
 }
 
-function renderStream(widget, data) {
-  const wrap = el("div", "w-stream");
-  const url = data?.url || widget.config?.stream_url || "";
-  if (!url) { wrap.appendChild(el("div", "w-empty", "No stream URL configured")); return wrap; }
+// Every live player holds a connection to the camera (go2rtc and similar start
+// a session per viewer) and a video decoder until it's destroyed. Cards are
+// re-rendered often (page changes, undo, Designer thumbnails), so players
+// whose video has left the page are torn down by a sweep.
+const _players = new Set();
+let _sweepTimer = null;
 
-  const video = document.createElement("video");
-  video.autoplay = true;
-  video.muted = true;
-  video.setAttribute("playsinline", "");
+function _destroyPlayer(p) {
+  _players.delete(p);
+  p.dead = true;
+  try { p.hls?.destroy(); } catch { /* already gone */ }
+  try { p.video.pause(); p.video.removeAttribute("src"); p.video.load(); } catch { /* ignore */ }
+}
 
-  const isHls = url.includes(".m3u8");
+function _sweepPlayers() {
+  for (const p of _players) if (!p.video.isConnected) _destroyPlayer(p);
+  if (!_players.size) { clearInterval(_sweepTimer); _sweepTimer = null; }
+}
 
-  if (isHls) {
+function _startPlayer(video, url) {
+  const p = { video, hls: null, dead: false };
+  _players.add(p);
+  if (!_sweepTimer) _sweepTimer = setInterval(_sweepPlayers, 2000);
+  if (url.includes(".m3u8")) {
     // Always use HLS.js for m3u8 — it handles live streams reliably across browsers
     _loadHlsJs().then(Hls => {
+      if (p.dead || !video.isConnected) { _destroyPlayer(p); return; }
       if (Hls && Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        p.hls = new Hls();
+        p.hls.loadSource(url);
+        p.hls.attachMedia(video);
+        p.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         // Safari native HLS fallback
         video.src = url;
@@ -1065,8 +1122,33 @@ function renderStream(widget, data) {
     video.loop = true;
     video.play().catch(() => {});
   }
+}
 
+function renderStream(widget, data, _envelope, opts = {}) {
+  const wrap = el("div", "w-stream");
+  const url = data?.url || widget.config?.stream_url || "";
+  if (!url) { wrap.appendChild(el("div", "w-empty", "No stream URL configured")); return wrap; }
+  if (opts.still) {
+    // previews (Designer thumbnails) never open the stream
+    wrap.classList.add("w-stream-still");
+    wrap.appendChild(el("div", "w-empty", "● Live stream"));
+    return wrap;
+  }
+
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.muted = true;
+  video.setAttribute("playsinline", "");
   wrap.appendChild(video);
+
+  // Only connect once the card is actually on the page; a render that is
+  // thrown away straight after never opens the stream.
+  let tries = 0;
+  const begin = () => {
+    if (video.isConnected) _startPlayer(video, url);
+    else if (++tries < 20) setTimeout(begin, 250);
+  };
+  requestAnimationFrame(begin);
   return wrap;
 }
 
@@ -1248,7 +1330,9 @@ function renderCalendar(widget, data) {
   return wrap;
 }
 
-const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard, opnsense: renderOpnsense, stream: renderStream, calendar: renderCalendar };
+const RENDERERS = { ping: renderPing, weather: renderWeather, clock: renderClock, netbox: renderNetBox, truenas: renderTruenas, proxmox: renderProxmox, adguard: renderAdGuard, opnsense: renderOpnsense, stream: renderStream, calendar: renderCalendar, ...EXTRA_RENDERERS };
+
+export const WIDGET_TYPE_LIST = Object.keys(RENDERERS);
 
 // Public: build the full widget card (title + body) for a given envelope.
 export function renderWidget(widget, envelope, opts = {}) {
@@ -1267,8 +1351,9 @@ export function renderWidget(widget, envelope, opts = {}) {
   if (data?.error) {
     body.appendChild(el("div", "w-error", "Error: " + data.error));
   } else {
-    body.appendChild((RENDERERS[widget.type] || renderStub)(widget, data));
+    body.appendChild((RENDERERS[widget.type] || renderStub)(widget, data, envelope, opts));
   }
+  card.dataset.type = widget.type;
 
   const head = el("div", "widget-head");
   head.appendChild(el("span", "widget-title", widget.title));
@@ -1277,6 +1362,15 @@ export function renderWidget(widget, envelope, opts = {}) {
   if (widget.type === "opnsense" && data?.version) {
     head.appendChild(el("span", "widget-version", data.version));
   }
+
+  const alert = envelope?.alert;
+  if (alert?.level) {
+    card.classList.add(`widget--alert-${alert.level}`);
+    const badge = el("span", `widget-alert-badge lv-${alert.level}`, alert.items.length > 1 ? `! ${alert.items.length}` : "!");
+    badge.title = alert.items.map((i) => i.message).join("\n");
+    head.appendChild(badge);
+  }
+  if (opts.hideTitle || widget.config?.hide_title) card.classList.add("widget--no-title");
 
   card.appendChild(head);
   card.appendChild(body);

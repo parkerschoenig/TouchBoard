@@ -8,29 +8,45 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16x16.png?v=1" />
   <link rel="icon" href="/static/img/favicon.ico?v=1" sizes="any" />
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png?v=1" />
+  <script>document.documentElement.dataset.appTheme = "studio";</script>
   <link rel="stylesheet" href="/static/vendor/gridstack.min.css" />
   <link rel="stylesheet" href="/static/css/app.css" />
+  <link rel="stylesheet" href="/static/css/v2.css" />
+  <link rel="stylesheet" href="/static/css/themes.css" />
+  <link rel="stylesheet" href="/static/css/editor.css" />
 </head>
 <body class="layout-editor-page">
-  <div class="topbar">
+  <header class="topbar">
     <h1 class="topbar-brand"><img src="/static/img/logo.png?v=3" alt="" class="topbar-logo-img" /><span>TouchBoard</span><span class="beta-pill">BETA</span></h1>
-    <label>Display
-      <input type="number" id="res-w" min="320" max="7680" value="1920" />
-      ×
-      <input type="number" id="res-h" min="240" max="4320" value="720" />
-    </label>
+    <div class="topbar-dropdown" id="profile-dropdown">
+      <button class="topbar-settings-btn topbar-dropdown-toggle" id="profile-menu-btn" data-tip="Switch which board profile you're editing">
+        <span id="profile-menu-label">Profile</span> <span class="dd-caret">▾</span>
+      </button>
+      <div class="topbar-dropdown-menu hidden" id="profile-menu" role="menu"></div>
+    </div>
+    <div class="ed-tb-group" role="group" aria-label="History">
+      <button type="button" class="ed-tb-btn" id="undo-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+      <button type="button" class="ed-tb-btn" id="redo-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
+    </div>
+    <div class="ed-screen" data-tip="The screen you're designing for">
+      <select id="screen-preset" aria-label="Screen size"></select>
+      <span class="ed-custom-res hidden" id="custom-res">
+        <input type="number" id="res-w" min="320" max="7680" value="1920" aria-label="Width" />
+        <span>×</span>
+        <input type="number" id="res-h" min="240" max="4320" value="720" aria-label="Height" />
+      </span>
+      <button type="button" class="ed-tb-btn" id="rotate-btn" title="Swap portrait / landscape" aria-label="Swap portrait and landscape">⟲</button>
+    </div>
     <span class="spacer"></span>
+    <button type="button" class="ed-cmdk-btn" id="cmdk-btn" title="Command palette (Ctrl+K)"><span>Search or run a command…</span><kbd>Ctrl K</kbd></button>
     <nav class="topbar-settings-nav">
-      <div class="topbar-dropdown" id="profile-dropdown">
-        <button class="topbar-settings-btn topbar-dropdown-toggle" id="profile-menu-btn" data-tip="Switch which board profile you're editing">
-          <span id="profile-menu-label">Profile</span> <span class="dd-caret">▾</span>
-        </button>
-        <div class="topbar-dropdown-menu hidden" id="profile-menu" role="menu"></div>
-      </div>
-      <button class="topbar-settings-btn" data-section="Designer" data-tip="Customize card styles and board appearance">Designer</button>
+      <button class="topbar-settings-btn" data-section="Designer" data-tip="Display theme and card styles">Designer</button>
       <div class="topbar-dropdown" id="settings-dropdown">
         <button class="topbar-settings-btn topbar-dropdown-toggle" id="settings-menu-btn" data-tip="Settings">Settings <span class="dd-caret">▾</span></button>
         <div class="topbar-dropdown-menu hidden" id="settings-menu" role="menu">
+          <button class="topbar-menu-item" data-section="Editor">Editor preferences</button>
+          <button class="topbar-menu-item" data-section="Notifications">Alerts &amp; notifications</button>
+          <div class="topbar-menu-divider"></div>
           <button class="topbar-menu-item" data-section="Profiles">Manage Profiles</button>
           <button class="topbar-menu-item" data-section="Ping Targets">Manage Ping Targets</button>
           <button class="topbar-menu-item" data-section="Integrations">Manage Integrations</button>
@@ -40,20 +56,20 @@
         </div>
       </div>
     </nav>
+    <a href="/display" target="_blank" rel="noopener" class="ed-open-display" id="open-display-link" data-tip="Open the display in a new tab">Open display ↗</a>
     <a id="update-badge" class="topbar-icon-btn update-badge hidden" href="#" target="_blank" rel="noopener noreferrer" title="A newer version is available on GitHub"><span class="update-dot"></span>Update available</a>
     <span class="topbar-user" id="topbar-user"></span>
     <button id="logout-btn" class="topbar-icon-btn topbar-signout-btn" title="Sign out">Sign out</button>
-  </div>
+  </header>
 
   <div class="layout-editor-container">
-    <!-- Left sidebar -->
-    <aside class="stack-palette">
-      <!-- Shown only while dragging a placed card back to remove it -->
-      <div class="palette-drop-zone" id="palette-drop-zone">← drop here to remove</div>
-
+    <!-- Library -->
+    <aside class="stack-palette ed-library" id="library">
+      <div class="palette-drop-zone" id="palette-drop-zone">← Drop here to remove</div>
+      <div class="ed-lib-search">
+        <input type="search" id="lib-search" placeholder="Search widgets" autocomplete="off" aria-label="Search widgets" />
+      </div>
       <div class="palette-scroll">
-
-        <!-- ── Widgets ─────────────────────────────────────────── -->
         <div class="sb-section" id="sb-widgets">
           <div class="sb-section-head">
             <button class="sb-toggle">
@@ -63,66 +79,54 @@
           </div>
           <div class="sb-body" id="widget-list"></div>
         </div>
-
         <div class="palette-tips">
-          <div class="tips-title">How to use</div>
+          <div class="tips-title">Placing widgets</div>
           <ul class="tips-list">
-            <li>Click <strong>＋</strong> next to a category to create a widget</li>
-            <li>Place a widget from the sidebar into the layout editor</li>
-            <li>Drag a second widget <em>onto</em> a placed card to stack them (multi-page widgets like NetBox, TrueNAS, Proxmox &amp; Weather can't be stacked)</li>
-            <li>Click <strong>✎</strong> on a card to reorder or remove widgets</li>
-            <li>Drag a placed card back here to remove it</li>
-            <li>Scroll over a card to flip between widgets</li>
-            <li>Changes save automatically</li>
+            <li>Drag a widget onto the board, or tap <strong>＋</strong> on it to drop it in the first free space</li>
+            <li>Drag across empty grid to draw a card, then pick what goes in it</li>
+            <li>Hold a dragged card over the middle of another for a moment to stack them</li>
+            <li>Changes save automatically · Ctrl Z undoes</li>
           </ul>
         </div>
-
-      </div><!-- /.palette-scroll -->
-
+      </div>
       <div class="sidebar-footer">
+        <button type="button" class="ed-lib-templates" id="templates-btn">Starter layouts…</button>
         <a href="https://ko-fi.com/parkertouchboard" target="_blank" rel="noopener" class="ob-donate-btn sidebar-donate-btn">☕ &nbsp;Support Development</a>
       </div>
     </aside>
 
-    <!-- Right: page tabs + preview viewport -->
-    <div class="layout-editor-body">
+    <!-- Canvas -->
+    <main class="layout-editor-body" id="canvas-area">
       <div class="preview-area">
         <div class="page-tabs-bar" id="page-tabs-bar">
           <button class="page-tab-add" id="page-tab-add" title="Add page">＋ Page</button>
-          <a href="/display" target="_blank" rel="noopener" class="open-display-btn" data-tip="Open display in new tab">Open Display ↗</a>
         </div>
         <div class="preview-viewport" id="preview-viewport">
-          <div class="grid-empty-hint" id="grid-empty-hint">
-            <div class="hint-arrow">←</div>
-            <div class="hint-text">Drag a widget on here to get started</div>
-          </div>
-          <div class="grid-stack" id="gs-grid"></div>
-        </div>
-        <div class="editor-controls-ref">
-          <span class="ecr-title">Controls</span>
-          <div class="ecr-items">
-            <div class="ecr-item"><span class="ecr-key">⠿ drag</span><span class="ecr-desc">move card</span></div>
-            <div class="ecr-item"><span class="ecr-key">⤡ drag edge</span><span class="ecr-desc">resize</span></div>
-            <div class="ecr-item"><span class="ecr-key">scroll ●●</span><span class="ecr-desc">cycle stack</span></div>
-            <div class="ecr-item"><span class="ecr-key">✎</span><span class="ecr-desc">edit widget/stack</span></div>
-            <div class="ecr-item"><span class="ecr-key">↙</span><span class="ecr-desc">remove from board</span></div>
-            <div class="ecr-item"><span class="ecr-key">drop onto card</span><span class="ecr-desc">stack widgets</span></div>
+          <div class="ed-stage" id="ed-stage">
+            <div class="grid-empty-hint" id="grid-empty-hint">
+              <div class="hint-arrow">←</div>
+              <div class="hint-text">Drag a widget here, or draw a card on the grid</div>
+            </div>
+            <div class="grid-stack" id="gs-grid"></div>
+            <div class="ed-draw-rect hidden" id="draw-rect"><span></span></div>
           </div>
         </div>
+        <div class="ed-statusbar" id="statusbar"></div>
       </div>
-    </div>
+      <div class="ed-float hidden" id="card-toolbar" role="toolbar" aria-label="Card actions"></div>
+    </main>
+
+    <!-- Inspector -->
+    <aside class="ed-inspector" id="inspector" aria-label="Inspector"></aside>
   </div>
 
-  <!-- Widget create / edit modal -->
   <dialog id="widget-modal"></dialog>
-
-  <!-- Stack create / edit modal -->
   <dialog id="stack-modal"></dialog>
-
-  <!-- Settings modal -->
   <dialog id="settings-modal"></dialog>
+  <input type="file" id="import-file" accept="application/json,.json" hidden />
 
   <script src="/static/vendor/gridstack-all.js"></script>
+  <script src="/static/vendor/qrcode.js"></script>
   <script type="module" src="/static/js/layout-editor.js"></script>
 </body>
 </html>
