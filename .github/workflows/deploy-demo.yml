@@ -1,0 +1,38 @@
+# Builds the static, in-browser demo (demo/build.mjs, no dependencies) and deploys it to
+# the touchboard-demo Cloudflare Pages project: main → production, other branches → a preview
+# URL. Needs the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets; without them it
+# still builds (which runs the build's scrub check) and skips only the upload.
+name: deploy-demo
+
+on:
+  push:
+    branches: [main, portfolio-demo]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - run: node demo/build.mjs
+
+      - uses: cloudflare/wrangler-action@v3
+        if: env.HAS_CLOUDFLARE == 'true'
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy demo/dist --project-name touchboard-demo --branch ${{ github.ref_name }}

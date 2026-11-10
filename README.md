@@ -2,7 +2,7 @@
 
 A touchscreen-first monitoring dashboard for homelabs and self-hosted infrastructure. Design a multi-page layout of widgets, integrations, and stacks in any browser - then point any display at the server URL.
 
-[![demo](https://img.shields.io/badge/live_demo-touchboard.onrender.com-3b82f6?style=flat-square)](https://touchboard.onrender.com)
+[![demo](https://img.shields.io/badge/live_demo-touchboard.pshl.app-3b82f6?style=flat-square)](https://touchboard.pshl.app)
 
 ## Features
 
@@ -186,6 +186,4 @@ Editing modes (inspector panel, draw to place) are under **Settings → Editor p
 
 ## Demo
 
-A live demo with simulated data is available at **[touchboard.onrender.com](https://touchboard.onrender.com)** (may take ~30 s to wake from cold start).
-
-Demo credentials: `admin` / `touchboard`
+A live demo runs entirely in your browser at **[touchboard.pshl.app](https://touchboard.pshl.app)**: simulated integrations, no sign-up, nothing saved. Use **Open Display** in the editor to watch your edits appear on the display in real time.
