@@ -46,8 +46,8 @@
 .widget--no-title .widget-head { display: none; }
 .stack-cell.alert-warn, .layout-stack-card:has(.widget--alert-warn) { box-shadow: 0 0 0 2px var(--tb-warn) !important; }
 .stack-cell.alert-crit, .layout-stack-card:has(.widget--alert-crit) { box-shadow: 0 0 0 2px var(--tb-crit), 0 0 22px color-mix(in srgb, var(--tb-crit) 45%, transparent) !important; }
-.stack-cell.alert-crit { animation: tb-crit-pulse 2.4s ease-in-out infinite; }
-@keyframes tb-crit-pulse { 50% { box-shadow: 0 0 0 2px var(--tb-crit), 0 0 34px color-mix(in srgb, var(--tb-crit) 70%, transparent); } }
+/* No pulse: the !important ring above always beat it, so it never showed, but it
+   still ran every frame for as long as a card stayed critical. */
 .stack-cell.takeover { animation: tb-takeover 1.2s ease-out 2; }
 @keyframes tb-takeover { 0% { transform: scale(1); } 30% { transform: scale(1.025); } 100% { transform: scale(1); } }
 .stack-dots .pd.alert-warn { background: var(--tb-warn); }
@@ -331,12 +331,11 @@ html[data-style="aurora"] body.display { background: #070a16 !important; }
     radial-gradient(34% 44% at 52% 86%, rgba(37, 99, 235, .52), transparent 70%),
     radial-gradient(24% 34% at 92% 74%, rgba(219, 39, 119, .40), transparent 70%);
   filter: blur(30px);
-  animation: tb-aurora-drift 32s ease-in-out infinite alternate;
+  /* Deliberately still. A drifting background makes the browser redraw the whole
+     screen, glass blur included, every frame forever: ~35% of a CPU core in the
+     browser's GPU process (shared with every other tab) for a barely visible effect. */
 }
 #preview-viewport[data-style="aurora"] { overflow: hidden; }
-@keyframes tb-aurora-drift { to { transform: translate(4%, -3%) rotate(5deg); } }
-@media (prefers-reduced-motion: reduce) { [data-style="aurora"] .board::before, #preview-viewport[data-style="aurora"]::before { animation: none; } }
-body.is-night[data-style="aurora"] .board::before, html[data-style="aurora"] body.is-night .board::before { animation: none; }
 
 [data-style="aurora"] .stack-cell,
 [data-style="aurora"] .layout-stack-card {
